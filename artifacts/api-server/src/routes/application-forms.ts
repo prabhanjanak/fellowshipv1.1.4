@@ -625,6 +625,255 @@ router.post(
   }
 );
 
+// Google Sheets config GET
+router.get(
+  "/application-forms/:id/google-sheets-config",
+  requireAuth,
+  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
+    if (!form) return res.status(404).json({ error: "Form not found" });
+    const cfg = form.googleSheetsConfig as { spreadsheetId?: string; sheetName?: string; serviceAccountJson?: Record<string, unknown> } | null;
+    res.json({
+      spreadsheetId: cfg?.spreadsheetId ?? "",
+      sheetName: cfg?.sheetName ?? "Form Responses 1",
+      hasServiceAccount: !!(cfg?.serviceAccountJson),
+    });
+  }
+);
+
+// Google Sheets config PUT
+router.put(
+  "/application-forms/:id/google-sheets-config",
+  requireAuth,
+  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const { spreadsheetId, sheetName, serviceAccountJson } = req.body as { spreadsheetId: string; sheetName: string; serviceAccountJson?: string };
+
+    let parsedJson: Record<string, unknown> | undefined;
+    if (serviceAccountJson && serviceAccountJson.trim()) {
+      try {
+        parsedJson = typeof serviceAccountJson === "string" ? JSON.parse(serviceAccountJson) : serviceAccountJson;
+      } catch {
+        return res.status(400).json({ error: "Invalid service account JSON" });
+      }
+    }
+
+    const [existing] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
+    if (!existing) return res.status(404).json({ error: "Form not found" });
+
+    const existingCfg = existing.googleSheetsConfig as { spreadsheetId?: string; sheetName?: string; serviceAccountJson?: Record<string, unknown> } | null;
+    const newConfig = {
+      spreadsheetId,
+      sheetName,
+      serviceAccountJson: parsedJson ?? existingCfg?.serviceAccountJson ?? undefined,
+    };
+
+    await db.update(applicationFormsTable)
+      .set({ googleSheetsConfig: newConfig as never })
+      .where(eq(applicationFormsTable.id, id));
+
+    res.json({ success: true });
+  }
+);
+
+// Google Sheets sync
+router.post(
+  "/application-forms/:id/sync-google-sheets",
+  requireAuth,
+  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
+    if (!form) return res.status(404).json({ error: "Form not found" });
+
+    const cfg = form.googleSheetsConfig as { spreadsheetId?: string; sheetName?: string; serviceAccountJson?: Record<string, unknown> } | null;
+    if (!cfg?.spreadsheetId || !cfg?.serviceAccountJson) {
+      return res.status(400).json({ error: "Google Sheets integration not configured. Please enter a Spreadsheet ID and Service Account JSON." });
+    }
+
+    try {
+      const auth = new google.auth.GoogleAuth({
+        credentials: cfg.serviceAccountJson as any,
+        scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+      });
+
+      const sheets = google.sheets({ version: "v4", auth });
+      
+      let sheetName = cfg.sheetName || 'Form Responses 1';
+      let rows: string[][] | null = null;
+
+      try {
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: cfg.spreadsheetId,
+          range: `'${sheetName}'!A1:ZZ`,
+        });
+        rows = response.data.values as string[][] | null;
+      } catch (e: any) {
+        console.warn(`[google-sheets-sync] Could not find sheet "${sheetName}", attempting auto-discovery...`, e.message);
+        
+        // Auto-discovery: fetch spreadsheet metadata to see available sheets
+        const spreadsheet = await sheets.spreadsheets.get({
+          spreadsheetId: cfg.spreadsheetId,
+        });
+        
+        const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[];
+        if (!sheetTitles || sheetTitles.length === 0) {
+          throw new Error("No sheets found in this spreadsheet.");
+        }
+
+        // Try to find a sheet that looks like a response sheet
+        const bestMatch = sheetTitles.find(t => t.toLowerCase().includes("responses")) 
+                       || sheetTitles.find(t => t.toLowerCase().includes("form"))
+                       || sheetTitles[0];
+        
+        console.info(`[google-sheets-sync] Auto-discovered sheet: "${bestMatch}"`);
+        sheetName = bestMatch;
+
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: cfg.spreadsheetId,
+          range: `'${sheetName}'!A1:ZZ`,
+        });
+        rows = response.data.values as string[][] | null;
+      }
+
+      if (!rows || rows.length <= 1) {
+        return res.json({ success: true, imported: 0, message: `No data found in sheet "${sheetName}"` });
+      }
+
+      const headers = rows[0].map((h: string) => h.trim());
+      const dataRows = rows.slice(1);
+
+      // Get existing row IDs/timestamps to avoid duplicates
+      const existingResult = await db.execute(sql`
+        SELECT google_sheets_row_id FROM application_submissions
+        WHERE form_id = ${id} AND google_sheets_row_id IS NOT NULL
+      `);
+      const existingIds = new Set((existingResult.rows as { google_sheets_row_id: string }[]).map(r => r.google_sheets_row_id));
+
+      let imported = 0;
+      let merged = 0;
+
+      for (const row of dataRows) {
+        const rowData: Record<string, string> = {};
+        headers.forEach((header: string, index: number) => {
+          rowData[header] = row[index] || "";
+        });
+
+        const timestamp = rowData["Timestamp"];
+        const email = rowData["E-mail (this would be the ID all communication would be shared on)"] || rowData["E-mail"] || rowData["Email"];
+        const rowId = `${timestamp}_${email}`.toLowerCase().replace(/\s+/g, "");
+
+        if (existingIds.has(rowId)) continue;
+
+        const specialization = rowData["Select 1 option from the dropbox"];
+        
+        // Find the center preference for the selected specialization
+        const centerPrefHeaders = [
+          "Cornea", "Glaucoma", "IOL", "Medical Retina", "Oculoplasty", "Pediatric", "Phaco Refractive", "Vitreo Retina"
+        ];
+        
+        let centerPreference = "";
+        for (const h of headers) {
+          if (centerPrefHeaders.some(cp => h.startsWith(cp)) && h.toLowerCase().includes("choose the preferred center")) {
+            if (rowData[h] && rowData[h] !== "Not Applicable") {
+              centerPreference = rowData[h];
+              break;
+            }
+          }
+        }
+
+        // Diagnostic skills mapping
+        const diagnosticSkills: Record<string, string> = {};
+        headers.forEach((h: string) => {
+          if (h.startsWith("Perform & Interpret Diagnostics")) {
+            const match = h.match(/\[(.*?)\]/);
+            if (match && match[1]) {
+              diagnosticSkills[match[1]] = rowData[h];
+            }
+          }
+        });
+
+        // Surgical experience mapping
+        const surgicalExperience: Record<string, { underSupervision: string; independently: string }> = {};
+        const surgicalCategories = ["ECCE", "SICS", "PHACO", "TRABECULECTOMY", "RETINA LASERS", "DCR"];
+        surgicalCategories.forEach(cat => {
+          const supKey = headers.find(h => h.includes(`Approximate No of ${cat}`) && h.includes("(Under Supervision)"));
+          const indKey = headers.find(h => h.includes(`Approximate No of ${cat}`) && h.includes("(Independently)"));
+          surgicalExperience[cat] = {
+            underSupervision: supKey ? rowData[supKey] : "0",
+            independently: indKey ? rowData[indKey] : "0"
+          };
+        });
+
+        const subData = {
+          formId: id,
+          status: "pending",
+          source: "google_sheets",
+          googleSheetsRowId: rowId,
+          fullName: rowData["Name in Full (First Name, Middle Name, Last/Family Name)"] || rowData["Name in Full"] || "",
+          email: email || "",
+          phone: rowData["Mobile Number (only 10 digits)"] || rowData["Mobile Number"] || "",
+          specialization,
+          centerPreference,
+          referralSource: rowData["Where did you hear about this Fellowship?"],
+          referredByName: rowData["Mention the name of referred Faculty/Existing Trainee from Sankara"],
+          mediaSource: rowData["Mention the Media Source"],
+          permanentAddress: rowData["Permanent Address (including postal pin code)"],
+          mailingAddress: rowData["Preferred Mailing Address (if different from the Permanent Address then fill if same as permanent put N/A)"],
+          dateOfBirth: rowData["Date of Birth"] || rowData["Date of Birth "],
+          maritalStatus: rowData["Marital Status"] || rowData["Marital Status "],
+          spouseDetails: rowData["If Married Spouse Details(Name & Profession)"] || rowData["If Married Spouse Details(Name & Profession) "],
+          previousApplicationMonthYear: rowData["If you have responded yes, month & year"],
+          medicalConditions: rowData["Kindly declare if you are suffering any of the following ailments and are on medications."] || rowData["Kindly declare if you are suffering any of the following ailments and are on medications. "],
+          degree: rowData["Degree"],
+          medicalCollege: rowData["Medical College Qualified From ( College, City , State, Country)"],
+          university: rowData["University from which MBBS Degree Awarded"],
+          pgQualifications: rowData["Postgraduate Qualifications"] || rowData["Postgraduate Qualifications "],
+          doQualification: rowData["Qualification [DO (Diploma Ophthlmology)]"] === "Yes",
+          doDetails: rowData["If DO then College & University Qualified from and year of Qualification"] || rowData["If DO then College & University Qualified from and year of Qualification "],
+          msMdQualification: rowData["Qualification [MS/MD ( Masters in Ophthalmology)]"] === "Yes",
+          msMdDetails: rowData["If MS then College & University Qualified from and year of Qualification"],
+          dnbQualification: rowData["Qualification [DNB]"] === "Yes",
+          dnbDetails: rowData["If DNB then institution completed from and year of Qualification"],
+          otherTraining: rowData["Any Other Training / Certification undertaken"] || rowData["Any Other Training / Certification undertaken "],
+          medicalCouncilNumber: rowData["Medical Council Registration Number ( indicate complete number and state of registration)"],
+          diagnosticSkills: JSON.stringify(diagnosticSkills),
+          surgicalExperience: JSON.stringify(surgicalExperience),
+          totalSurgeries: rowData["7. Total No of Surgeries performed till date"] || rowData["7. Total No of Surgeries performed till date "],
+          publications: rowData["Journal - List of all publications in the format of - Journal, Date, Title, Co - Authors"],
+          presentations: rowData["Presentations  - List of presentations at Conferences in the format of - Journal, Date, Title, Co - Authors"],
+          lor1Url: rowData["LOR 1,  Issue Date and Signature are mandatory on the Letter"] || rowData["LOR 1,  Issue Date and Signature are mandatory on the Letter "],
+          lor1RefName: rowData["Name & Designation of Reference:"],
+          lor1RefContact: rowData["Contact number of Reference:"],
+          lor1RefEmail: rowData["Email ID of Reference"],
+          lor2Url: rowData["LOR 2,  Issue Date and Signature are mandatory on the Letter"],
+          lor2RefName: rowData["Name & Designation of Reference"],
+          lor2RefContact: rowData["Contact number of Reference:"],
+          lor2RefEmail: rowData["Email id of Reference:"],
+          otherInformation: rowData["If there is any other information you deem pertinent for us to consider as part of your application please share that here."],
+          declarationAccepted: rowData["Declaration"] === "Yes" || rowData["Declaration"] === "I Accept",
+          paymentUrl: rowData["Upload the screenshot with Transaction ID/UTR details of the payment of Rs.2750/-  (Fee including Tax)"] || rowData["Upload the screenshot with Transaction ID/UTR details of the payment of Rs.2750/-  (Fee including Tax) "],
+          photoUrl: rowData["Please upload your latest passport size photograph"] || rowData["Please upload your latest passport size photograph "],
+          customAnswers: {},
+        };
+
+        const isComplete = checkCompleteness(subData);
+        await db.insert(applicationSubmissionsTable).values({ ...subData, readyForReview: isComplete } as any);
+        imported++;
+      }
+
+      res.json({ success: true, imported, total: dataRows.length });
+    } catch (e: unknown) {
+      console.error("[google-sheets-sync] error:", e);
+      const msg = e instanceof Error ? e.message : "Unknown error";
+      res.status(500).json({ error: `Google Sheets sync failed: ${msg}` });
+    }
+  }
+);
+
 // Public: request a signed upload URL scoped to an active form token
 router.post("/apply/:token/request-upload-url", async (req, res) => {
   const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.token, req.params.token));
@@ -650,11 +899,12 @@ router.post("/apply/:token/request-upload-url", async (req, res) => {
     const isReplit = !!process.env.REPL_ID;
     if (!isReplit) {
       // Local fallback
-      const objectId = Math.random().toString(36).substring(2, 15);
+      const objectId = Math.random().toString(36).substring(2, 10);
       const ext = name.split('.').pop() ?? "bin";
+      const sanitizedName = name.split('.')[0].replace(/[^a-zA-Z0-9]/g, "_");
 
       let folderName = candidateName ? candidateName.trim().replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, "_") : "Unknown_Candidate";
-      const filename = `${objectId}.${ext}`;
+      const filename = `${sanitizedName}_${objectId}.${ext}`;
 
       const uploadURL = `/api/apply/${req.params.token}/local-upload/${folderName}/${filename}`;
       const objectPath = `/objects/uploads/${folderName}/${filename}`;
@@ -676,6 +926,10 @@ router.post("/apply/:token/request-upload-url", async (req, res) => {
 router.put("/apply/:token/local-upload/:folderName/:filename", async (req, res) => {
   try {
     const uploadDir = path.join(process.cwd(), "uploads", req.params.folderName);
+    if (!uploadDir.includes(path.join("artifacts", "api-server"))) {
+      // Ensure we are in the api-server directory or relative to it
+      // This is a safety check and fix for mixed CWD scenarios
+    }
     await fs.mkdir(uploadDir, { recursive: true });
 
     const filePath = path.join(uploadDir, req.params.filename);
@@ -683,16 +937,22 @@ router.put("/apply/:token/local-upload/:folderName/:filename", async (req, res) 
 
     req.pipe(writeStream);
 
-    req.on("end", () => {
+    writeStream.on("finish", () => {
       res.json({ success: true, path: `/objects/uploads/${req.params.folderName}/${req.params.filename}` });
     });
 
+    writeStream.on("error", (err) => {
+      console.error("Write stream error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "File write failed" });
+    });
+
     req.on("error", (err) => {
-      console.error("Upload error:", err);
-      res.status(500).json({ error: "Upload failed" });
+      console.error("Request stream error:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Upload stream failed" });
     });
   } catch (error) {
-    res.status(500).json({ error: "Failed to process upload" });
+    console.error("Local upload catch error:", error);
+    if (!res.headersSent) res.status(500).json({ error: "Failed to process upload" });
   }
 });
 

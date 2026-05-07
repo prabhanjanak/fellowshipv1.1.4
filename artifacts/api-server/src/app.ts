@@ -27,6 +27,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
+app.use("/objects", express.static(path.join(process.cwd(), "uploads")));
 
 // Redirect root to the admin panel
 app.get("/", (_req, res) => {

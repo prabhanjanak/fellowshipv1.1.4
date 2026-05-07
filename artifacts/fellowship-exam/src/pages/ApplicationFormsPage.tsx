@@ -341,29 +341,30 @@ export default function ApplicationFormsPage() {
   const [createCustomFields, setCreateCustomFields] = useState<CustomField[]>([]);
   const [editCustomFields, setEditCustomFields] = useState<CustomField[]>([]);
 
-  // Google Forms integration state (per edit dialog + success dialog)
-  const [googleFormsConfig, setGoogleFormsConfig] = useState({ googleFormId: "", serviceAccountJson: "" });
-  const [savingGfConfig, setSavingGfConfig] = useState(false);
-  const [createdFormGfOpen, setCreatedFormGfOpen] = useState(false);
-  const [createdFormGfConfig, setCreatedFormGfConfig] = useState({ googleFormId: "", serviceAccountJson: "" });
-  const [savingCreatedGf, setSavingCreatedGf] = useState(false);
+  // Google Sheets integration state (per edit dialog + success dialog)
+  const [googleSheetsConfig, setGoogleSheetsConfig] = useState({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" });
+  const [savingGsConfig, setSavingGsConfig] = useState(false);
+  const [createdFormGsOpen, setCreatedFormGsOpen] = useState(false);
+  const [createdFormGsConfig, setCreatedFormGsConfig] = useState({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" });
+  const [savingCreatedGs, setSavingCreatedGs] = useState(false);
 
-  // Load existing GF config when edit dialog opens
-  const { data: editFormGfData } = useQuery<{ googleFormId: string; hasServiceAccount: boolean }>({
-    queryKey: ["gf-config", editForm?.id],
-    queryFn: () => api.get<{ googleFormId: string; hasServiceAccount: boolean }>(`/application-forms/${editForm!.id}/google-forms-config`),
+  // Load existing GS config when edit dialog opens
+  const { data: editFormGsData } = useQuery<{ spreadsheetId: string; sheetName: string; hasServiceAccount: boolean }>({
+    queryKey: ["gs-config", editForm?.id],
+    queryFn: () => api.get<{ spreadsheetId: string; sheetName: string; hasServiceAccount: boolean }>(`/application-forms/${editForm!.id}/google-sheets-config`),
     enabled: editForm !== null,
   });
-  // Populate GF config fields when data loads for edit dialog
+  // Populate GS config fields when data loads for edit dialog
   useEffect(() => {
-    if (editFormGfData && editForm) {
-      setGoogleFormsConfig({
-        googleFormId: editFormGfData.googleFormId || "",
+    if (editFormGsData && editForm) {
+      setGoogleSheetsConfig({
+        spreadsheetId: editFormGsData.spreadsheetId || "",
+        sheetName: editFormGsData.sheetName || "Form Responses 1",
         serviceAccountJson: "",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editFormGfData, editForm?.id]);
+  }, [editFormGsData, editForm?.id]);
 
   // Submissions list UI state
   const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "pending" | "approved" | "rejected">("all");
@@ -449,18 +450,15 @@ export default function ApplicationFormsPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const syncGoogleForms = useMutation({
+  const syncGoogleSheets = useMutation({
     mutationFn: (formId: number) =>
-      api.post<{ imported: number; merged: number; total: number; uniqueApplicants: number }>(
-        `/application-forms/${formId}/sync-google-forms`, {}
+      api.post<{ imported: number; total: number }>(
+        `/application-forms/${formId}/sync-google-sheets`, {}
       ),
     onSuccess: (data, formId) => {
-      const parts: string[] = [];
-      if (data.imported > 0) parts.push(`${data.imported} new`);
-      if (data.merged > 0) parts.push(`${data.merged} merged (same applicant, multiple specializations)`);
       toast({
-        title: `Sync complete — ${data.uniqueApplicants} unique applicant${data.uniqueApplicants !== 1 ? "s" : ""}`,
-        description: parts.length > 0 ? parts.join(" · ") : "No new responses.",
+        title: `Sync complete`,
+        description: data.imported > 0 ? `${data.imported} new submissions imported.` : "No new responses.",
       });
       qc.invalidateQueries({ queryKey: ["submissions", formId] });
       qc.invalidateQueries({ queryKey: ["application-forms"] });
@@ -481,15 +479,15 @@ export default function ApplicationFormsPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const saveGoogleFormsConfig = async (formId: number) => {
-    setSavingGfConfig(true);
+  const saveGoogleSheetsConfig = async (formId: number) => {
+    setSavingGsConfig(true);
     try {
-      await api.put(`/application-forms/${formId}/google-forms-config`, googleFormsConfig);
-      toast({ title: "Google Forms integration saved" });
+      await api.put(`/application-forms/${formId}/google-sheets-config`, googleSheetsConfig);
+      toast({ title: "Google Sheets integration saved" });
     } catch (e: unknown) {
       toast({ title: "Error", description: e instanceof Error ? e.message : "Failed to save", variant: "destructive" });
     } finally {
-      setSavingGfConfig(false);
+      setSavingGsConfig(false);
     }
   };
 
@@ -711,21 +709,59 @@ export default function ApplicationFormsPage() {
             </Card>
           )}
 
-          {/* Custom field answers */}
-          {customFields.length > 0 && viewedSub.customAnswers && Object.keys(viewedSub.customAnswers).length > 0 && (
-            <Card>
-              <CardHeader><CardTitle className="text-base">Additional Answers</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {customFields.map((cf) => {
-                  const answer = viewedSub.customAnswers?.[cf.id];
-                  if (!answer) return null;
-                  return (
-                    <div key={cf.id} className="flex justify-between border-b pb-1.5 last:border-0">
-                      <span className="font-medium text-muted-foreground">{cf.label}</span>
-                      <span className="text-right max-w-48">{answer === "true" ? "Yes" : answer === "false" ? "No" : answer}</span>
-                    </div>
-                  );
-                })}
+          {/* Clinical Skills & Experience */}
+          {(viewedSub.diagnosticSkills || viewedSub.surgicalExperience) && (
+            <Card className="md:col-span-2">
+              <CardHeader><CardTitle className="text-base">Clinical Skills & Surgical Experience</CardTitle></CardHeader>
+              <CardContent className="space-y-6 text-sm">
+                {viewedSub.diagnosticSkills && (() => {
+                  try {
+                    const skills = JSON.parse(viewedSub.diagnosticSkills);
+                    return (
+                      <div>
+                        <span className="font-medium text-muted-foreground block mb-2">Diagnostic Skills</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {Object.entries(skills).map(([skill, val]) => (
+                            <div key={skill} className="flex flex-col border rounded p-2 bg-muted/10">
+                              <span className="text-xs text-muted-foreground">{skill}</span>
+                              <span className="font-medium">{val as string}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
+                {viewedSub.surgicalExperience && (() => {
+                  try {
+                    const exp = JSON.parse(viewedSub.surgicalExperience);
+                    return (
+                      <div>
+                        <span className="font-medium text-muted-foreground block mb-2">Surgical Experience (No. of Procedures)</span>
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse">
+                            <thead>
+                              <tr className="bg-muted/50">
+                                <th className="text-left p-2 border">Procedure</th>
+                                <th className="text-center p-2 border">Under Supervision</th>
+                                <th className="text-center p-2 border">Independently</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(exp).map(([proc, vals]: [string, any]) => (
+                                <tr key={proc}>
+                                  <td className="p-2 border font-medium">{proc}</td>
+                                  <td className="p-2 border text-center">{vals.underSupervision}</td>
+                                  <td className="p-2 border text-center">{vals.independently}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
               </CardContent>
             </Card>
           )}
@@ -798,10 +834,10 @@ export default function ApplicationFormsPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button variant="outline" size="sm" className="gap-1.5"
-              onClick={() => syncGoogleForms.mutate(viewFormId)}
-              disabled={syncGoogleForms.isPending}>
-              {syncGoogleForms.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Sync Google Forms
+              onClick={() => syncGoogleSheets.mutate(viewFormId)}
+              disabled={syncGoogleSheets.isPending}>
+              {syncGoogleSheets.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Sync Google Sheets
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportExcel(viewFormId)} disabled={exporting || submissions.length === 0}>
               {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -897,7 +933,7 @@ export default function ApplicationFormsPage() {
                           <Badge className={STATUS_COLORS[s.status] ?? ""} variant="secondary">{s.status}</Badge>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {s.source === "google_forms" ? "Google Forms" : "Internal"}
+                          {s.source === "google_sheets" ? "Google Sheets" : s.source === "google_forms" ? "Google Forms" : "Internal"}
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
                           {new Date(s.submittedAt).toLocaleDateString("en-IN")}
@@ -1137,35 +1173,44 @@ export default function ApplicationFormsPage() {
 
               <Separator />
 
-              {/* Google Forms Integration */}
+              {/* Google Sheets Integration */}
               <div className="space-y-3">
                 <div>
-                  <p className="text-sm font-semibold flex items-center gap-2"><RefreshCw className="h-4 w-4" /> Google Forms Integration</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Auto-import responses from a Google Form into this application form</p>
+                  <p className="text-sm font-semibold flex items-center gap-2"><RefreshCw className="h-4 w-4" /> Google Sheets Integration</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Auto-import responses from a Google Sheet into this application form</p>
                 </div>
                 <div className="space-y-2 rounded-lg border p-3 bg-muted/20">
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Google Form ID</Label>
+                    <Label className="text-xs">Spreadsheet ID</Label>
                     <Input
                       placeholder="e.g., 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
-                      value={googleFormsConfig.googleFormId}
-                      onChange={(e) => setGoogleFormsConfig((c) => ({ ...c, googleFormId: e.target.value }))}
+                      value={googleSheetsConfig.spreadsheetId}
+                      onChange={(e) => setGoogleSheetsConfig((c) => ({ ...c, spreadsheetId: e.target.value }))}
                       className="text-xs font-mono"
                     />
-                    <p className="text-xs text-muted-foreground">Find this in the Google Forms URL after /d/</p>
+                    <p className="text-xs text-muted-foreground">Find this in the Google Sheet URL after /d/</p>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-xs">Service Account JSON {editFormGfData?.hasServiceAccount && <span className="text-muted-foreground font-normal">(leave blank to keep existing)</span>}</Label>
+                    <Label className="text-xs">Sheet Name</Label>
+                    <Input
+                      placeholder="e.g., Form Responses 1"
+                      value={googleSheetsConfig.sheetName}
+                      onChange={(e) => setGoogleSheetsConfig((c) => ({ ...c, sheetName: e.target.value }))}
+                      className="text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Service Account JSON {editFormGsData?.hasServiceAccount && <span className="text-muted-foreground font-normal">(leave blank to keep existing)</span>}</Label>
                     <Textarea
-                      placeholder={editFormGfData?.hasServiceAccount ? '(saved) — paste new JSON to replace' : '{"type":"service_account","project_id":"..."}'}
+                      placeholder={editFormGsData?.hasServiceAccount ? '(saved) — paste new JSON to replace' : '{"type":"service_account","project_id":"..."}'}
                       rows={4}
-                      value={googleFormsConfig.serviceAccountJson}
-                      onChange={(e) => setGoogleFormsConfig((c) => ({ ...c, serviceAccountJson: e.target.value }))}
+                      value={googleSheetsConfig.serviceAccountJson}
+                      onChange={(e) => setGoogleSheetsConfig((c) => ({ ...c, serviceAccountJson: e.target.value }))}
                       className="text-xs font-mono"
                     />
                   </div>
-                  <Button size="sm" className="gap-1.5" onClick={() => saveGoogleFormsConfig(editForm.id)} disabled={savingGfConfig || !googleFormsConfig.googleFormId}>
-                    {savingGfConfig ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                  <Button size="sm" className="gap-1.5" onClick={() => saveGoogleSheetsConfig(editForm.id)} disabled={savingGsConfig || !googleSheetsConfig.spreadsheetId}>
+                    {savingGsConfig ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                     Save Integration
                   </Button>
                 </div>
@@ -1225,7 +1270,7 @@ export default function ApplicationFormsPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setEditForm(null); setEditCustomFields([]); setGoogleFormsConfig({ googleFormId: "", serviceAccountJson: "" }); }}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setEditForm(null); setEditCustomFields([]); setGoogleSheetsConfig({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" }); }}>Cancel</Button>
             <Button
               disabled={updateFormMutation.isPending || !editForm?.title}
               onClick={() => editForm && updateFormMutation.mutate({
@@ -1243,7 +1288,7 @@ export default function ApplicationFormsPage() {
       </Dialog>
 
       {/* Form Created Success Dialog */}
-      <Dialog open={createdForm !== null} onOpenChange={(o) => { if (!o) { setCreatedForm(null); setCreatedFormGfOpen(false); setCreatedFormGfConfig({ googleFormId: "", serviceAccountJson: "" }); } }}>
+      <Dialog open={createdForm !== null} onOpenChange={(o) => { if (!o) { setCreatedForm(null); setCreatedFormGsOpen(false); setCreatedFormGsConfig({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" }); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
@@ -1283,31 +1328,40 @@ export default function ApplicationFormsPage() {
                 </Button>
               </div>
 
-              {/* Google Forms Integration Section */}
+              {/* Google Sheets Integration Section */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   type="button"
                   className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium bg-muted/50 hover:bg-muted transition-colors"
-                  onClick={() => setCreatedFormGfOpen((v) => !v)}
+                  onClick={() => setCreatedFormGsOpen((v) => !v)}
                 >
                   <span className="flex items-center gap-2">
                     <Settings2 className="h-4 w-4 text-muted-foreground" />
-                    Connect Google Forms (optional)
+                    Connect Google Sheets (optional)
                   </span>
-                  {createdFormGfOpen
+                  {createdFormGsOpen
                     ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
                     : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                 </button>
-                {createdFormGfOpen && (
+                {createdFormGsOpen && (
                   <div className="p-4 space-y-3 border-t">
-                    <p className="text-xs text-muted-foreground">Link a Google Form to automatically sync responses as submissions.</p>
+                    <p className="text-xs text-muted-foreground">Link a Google Sheet to automatically sync responses as submissions.</p>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Google Form ID</Label>
+                      <Label className="text-xs">Spreadsheet ID</Label>
                       <Input
-                        placeholder="e.g. 1FAIpQLSe..."
+                        placeholder="e.g. 1BxiMVs0XRA5..."
+                        className="h-8 text-xs font-mono"
+                        value={createdFormGsConfig.spreadsheetId}
+                        onChange={(e) => setCreatedFormGsConfig((c) => ({ ...c, spreadsheetId: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Sheet Name</Label>
+                      <Input
+                        placeholder="Form Responses 1"
                         className="h-8 text-xs"
-                        value={createdFormGfConfig.googleFormId}
-                        onChange={(e) => setCreatedFormGfConfig((c) => ({ ...c, googleFormId: e.target.value }))}
+                        value={createdFormGsConfig.sheetName}
+                        onChange={(e) => setCreatedFormGsConfig((c) => ({ ...c, sheetName: e.target.value }))}
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -1315,26 +1369,26 @@ export default function ApplicationFormsPage() {
                       <Textarea
                         placeholder='{"type":"service_account",...}'
                         className="text-xs font-mono h-24 resize-none"
-                        value={createdFormGfConfig.serviceAccountJson}
-                        onChange={(e) => setCreatedFormGfConfig((c) => ({ ...c, serviceAccountJson: e.target.value }))}
+                        value={createdFormGsConfig.serviceAccountJson}
+                        onChange={(e) => setCreatedFormGsConfig((c) => ({ ...c, serviceAccountJson: e.target.value }))}
                       />
                     </div>
                     <Button
                       size="sm"
                       className="gap-1.5 w-full"
-                      disabled={savingCreatedGf || !createdFormGfConfig.googleFormId}
+                      disabled={savingCreatedGs || !createdFormGsConfig.spreadsheetId}
                       onClick={async () => {
-                        setSavingCreatedGf(true);
+                        setSavingCreatedGs(true);
                         try {
-                          await api.put(`/application-forms/${createdForm.id}/google-forms-config`, createdFormGfConfig);
-                          toast({ title: "Google Forms integration saved" });
-                          setCreatedFormGfOpen(false);
+                          await api.put(`/application-forms/${createdForm.id}/google-sheets-config`, createdFormGsConfig);
+                          toast({ title: "Google Sheets integration saved" });
+                          setCreatedFormGsOpen(false);
                         } catch (e) {
                           toast({ title: "Failed to save", description: (e as Error).message, variant: "destructive" });
-                        } finally { setSavingCreatedGf(false); }
+                        } finally { setSavingCreatedGs(false); }
                       }}
                     >
-                      {savingCreatedGf ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      {savingCreatedGs ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       Save Integration
                     </Button>
                   </div>
@@ -1343,7 +1397,7 @@ export default function ApplicationFormsPage() {
             </div>
           )}
           <DialogFooter>
-            <Button onClick={() => { setCreatedForm(null); setCreatedFormGfOpen(false); }}>Done</Button>
+            <Button onClick={() => { setCreatedForm(null); setCreatedFormGsOpen(false); }}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

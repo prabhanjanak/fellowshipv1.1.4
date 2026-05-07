@@ -91,6 +91,12 @@ async function runStartupFixes() {
   // Migration: google_forms_response_id for deduplication
   await db.execute(sql`ALTER TABLE application_submissions ADD COLUMN IF NOT EXISTS google_forms_response_id TEXT`);
 
+  // Migration: google_sheets_config on application_forms
+  await db.execute(sql`ALTER TABLE application_forms ADD COLUMN IF NOT EXISTS google_sheets_config JSONB DEFAULT NULL`);
+
+  // Migration: google_sheets_row_id for deduplication
+  await db.execute(sql`ALTER TABLE application_submissions ADD COLUMN IF NOT EXISTS google_sheets_row_id TEXT`);
+
   // Migration: add display_operator role to enum (must run outside transaction - best-effort)
   try { await db.execute(sql`ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'display_operator'`); } catch (_) { /* already exists */ }
 

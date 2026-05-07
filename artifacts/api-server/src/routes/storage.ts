@@ -4,6 +4,7 @@ import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage"
 import { requireAuth, requireRole } from "../middleware/auth";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import path from "path";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -31,7 +32,12 @@ router.get("/storage/public-objects/*filePath", async (req: Request, res: Respon
     const file = await objectStorageService.searchPublicObject(filePath);
     if (!file) { res.status(404).json({ error: "File not found" }); return; }
     const response = await objectStorageService.downloadObject(file);
-    res.status(response.status);
+    if (!response) {
+      res.status(404).json({ error: "Could not download file" });
+      return;
+    }
+    const statusCode = typeof response.status === 'number' ? response.status : 200;
+    res.status(statusCode);
     response.headers.forEach((value, key) => res.setHeader(key, value));
     if (response.body) {
       Readable.fromWeb(response.body as ReadableStream<Uint8Array>).pipe(res);
@@ -70,21 +76,26 @@ router.get("/storage/objects/*path", requireAuth, requireRole("super_admin", "pr
 
     const isReplit = !!process.env.REPL_ID;
     if (!isReplit) {
-      import("path").then(async (pathMod) => {
         const { fileURLToPath } = await import("url");
-        // Go up from dist/routes/ → api-server root
-        const apiServerRoot = pathMod.resolve(fileURLToPath(import.meta.url), "..", "..", "..");
-        const localPath = pathMod.join(apiServerRoot, "uploads", objectPath.replace("/objects/uploads/", ""));
+        // We use process.cwd() as the base, which is consistent with the upload logic
+        const localPath = path.join(process.cwd(), "uploads", objectPath.replace("/objects/uploads/", ""));
         res.sendFile(localPath, (err) => {
-          if (err && !res.headersSent) res.status(404).json({ error: "File not found on disk" });
+          if (err && !res.headersSent) {
+            req.log.warn({ localPath, err }, "File not found on disk");
+            res.status(404).json({ error: "File not found on disk" });
+          }
         });
-      });
       return;
     }
 
     const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
     const response = await objectStorageService.downloadObject(objectFile);
-    res.status(response.status);
+    if (!response) {
+      res.status(404).json({ error: "Could not download object" });
+      return;
+    }
+    const statusCode = typeof response.status === 'number' ? response.status : 200;
+    res.status(statusCode);
     response.headers.forEach((value, key) => res.setHeader(key, value));
     if (response.body) {
       Readable.fromWeb(response.body as ReadableStream<Uint8Array>).pipe(res);

@@ -22,6 +22,7 @@ export const applicationFormsTable = pgTable("application_forms", {
   customFields: jsonb("custom_fields").$type<CustomField[]>().default([]),
   sectionsConfig: jsonb("sections_config").$type<any[]>().default([]),
   googleFormsConfig: jsonb("google_forms_config").$type<{ formId: string; serviceAccountJson: Record<string, unknown> } | null>().default(null),
+  googleSheetsConfig: jsonb("google_sheets_config").$type<{ spreadsheetId: string; sheetName: string; serviceAccountJson: Record<string, unknown> } | null>().default(null),
 });
 
 export const applicationSubmissionsTable = pgTable("application_submissions", {
@@ -91,6 +92,7 @@ export const applicationSubmissionsTable = pgTable("application_submissions", {
   source: text("source").notNull().default("internal"),
   readyForReview: boolean("ready_for_review").notNull().default(false),
   googleFormsResponseId: text("google_forms_response_id"),
+  googleSheetsRowId: text("google_sheets_row_id"),
 
   reviewNotes: text("review_notes"),
   submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),

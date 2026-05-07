@@ -8,13 +8,8 @@ import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 const rawPort = process.env.PORT;
 const port = rawPort ? Number(rawPort) : 3000;
 
-const basePath = process.env.BASE_PATH;
+const basePath = process.env.BASE_PATH || "/admin";
 
-if (!basePath) {
-  throw new Error(
-    "BASE_PATH environment variable is required but was not provided.",
-  );
-}
 
 export default defineConfig({
   base: basePath,
@@ -58,12 +53,12 @@ export default defineConfig({
     },
     proxy: {
       "/admin/api": {
-        target: "http://localhost:5000",
+        target: "http://localhost:8080",
         changeOrigin: true,
         rewrite: (path: string) => path.replace(/^\/admin/, ""),
       },
       "/api": {
-        target: "http://localhost:5000",
+        target: "http://localhost:8080",
         changeOrigin: true,
       },
     },

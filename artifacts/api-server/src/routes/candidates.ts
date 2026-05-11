@@ -19,7 +19,9 @@ import {
   applicationSubmissionsTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { sendOfferLetterEmail } from "../lib/email";
+import { sendOfferLetterEmail, sendOfferLetterWithAttachment } from "../lib/email";
+import { processGoogleDocTemplate } from "../lib/google-docs";
+import { emailSettingsTable } from "@workspace/db";
 
 const router: Router = Router();
 
@@ -412,24 +414,58 @@ router.post("/candidates/:id/send-offer", requireAuth, requireRole("super_admin"
   const unitName = unit?.name || "Sankara Eye Hospital";
 
   try {
-    await sendOfferLetterEmail({
-      toEmail: c.email,
-      toName: c.fullName,
-      candidateCode: c.candidateCode,
-      specialization,
-      unitName
-    });
+    const [settings] = await db.select().from(emailSettingsTable).limit(1);
     
-    // Mark as sent in reviewNotes or similar (optional but good for UI)
+    if (settings && settings.googleDocsTemplateId && settings.googleServiceAccountJson) {
+      // Use Google Docs Template
+      const pdfBuffer = await processGoogleDocTemplate({
+        templateId: settings.googleDocsTemplateId,
+        serviceAccountJson: settings.googleServiceAccountJson,
+        replacements: {
+          letter_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
+          name: c.fullName,
+          address: c.address || "",
+          interview_date: req.body.interview_date || "—",
+          specialization: specialization,
+          unit: unitName,
+          duration: req.body.duration || "24 Months",
+          start_date: req.body.start_date || "—",
+          reporting_date: req.body.reporting_date || "—",
+          induction_dates: req.body.induction_dates || "—",
+          stipend: req.body.stipend || "0",
+          stipend_words: req.body.stipend_words || "Zero",
+          reporting_doctor: req.body.reporting_doctor || "the Chief Medical Officer",
+          signing_authority: req.body.signing_authority || "Director"
+        }
+      });
+
+      await sendOfferLetterWithAttachment({
+        toEmail: c.email,
+        toName: c.fullName,
+        pdfBuffer,
+        fileName: `Offer_Letter_${c.candidateCode}.pdf`
+      });
+    } else {
+      // Fallback to HTML template
+      await sendOfferLetterEmail({
+        toEmail: c.email,
+        toName: c.fullName,
+        candidateCode: c.candidateCode,
+        specialization,
+        unitName
+      });
+    }
+    
+    // Mark as sent
     const newNotes = reviewNotes + " [OFFER SENT]";
     await db.update(applicationSubmissionsTable)
       .set({ reviewNotes: newNotes })
       .where(eq(applicationSubmissionsTable.email, c.email));
 
-    res.json({ success: true });
-  } catch (e) {
+    res.json({ success: true, method: settings?.googleDocsTemplateId ? "google_docs" : "html" });
+  } catch (e: any) {
     console.error("[email] Failed to send offer letter", e);
-    res.status(500).json({ error: "Failed to send email. Please check SMTP settings." });
+    res.status(500).json({ error: e.message || "Failed to send email." });
   }
 });
 

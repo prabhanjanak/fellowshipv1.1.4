@@ -7,6 +7,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Separator } from "../components/ui/separator";
+import { Textarea } from "../components/ui/textarea";
 import { useToast } from "../hooks/use-toast";
 import { 
   Mail, 
@@ -15,9 +16,10 @@ import {
   Send, 
   Loader2, 
   Save, 
-  AlertCircle,
   Bell,
-  MailCheck
+  MailCheck,
+  FileText,
+  FileCode2,
 } from "lucide-react";
 
 export default function EmailSettingsPage() {
@@ -58,17 +60,17 @@ export default function EmailSettingsPage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-6 max-w-4xl mx-auto space-y-6 pb-20">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Email Configuration</h1>
-          <p className="text-muted-foreground">Manage SMTP settings and automated notification triggers.</p>
+          <p className="text-muted-foreground">Manage SMTP settings and Google Docs document templates.</p>
         </div>
         <BadgeCheck className="h-10 w-10 text-primary/20" />
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <div className="flex items-center gap-2">
               <Settings className="h-5 w-5 text-primary" />
@@ -114,7 +116,7 @@ export default function EmailSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader>
             <div className="flex items-center gap-2">
               <Mail className="h-5 w-5 text-primary" />
@@ -134,21 +136,63 @@ export default function EmailSettingsPage() {
           </CardContent>
         </Card>
 
-        <div className="flex items-center justify-between gap-4 bg-muted/30 p-4 rounded-xl border border-dashed">
+        {/* Google Docs Template Integration */}
+        <Card className="border-primary/20 bg-primary/5 shadow-sm">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" />
+              <CardTitle>Google Docs API Template</CardTitle>
+            </div>
+            <CardDescription>Generate professional PDF offer letters from a Google Doc template.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="googleDocsTemplateId">Google Doc Template ID</Label>
+              <Input 
+                id="googleDocsTemplateId" 
+                name="googleDocsTemplateId" 
+                defaultValue={settings?.googleDocsTemplateId} 
+                placeholder="1aBc2DeFgHiJkLmNoPqRsTuVwXyZ..." 
+              />
+              <p className="text-[10px] text-muted-foreground italic">
+                The document must have placeholders like <strong>{`{{candidateName}}`}</strong>, <strong>{`{{specialization}}`}</strong>, etc.
+              </p>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="googleServiceAccountJson" className="flex items-center gap-2">
+                <FileCode2 className="h-4 w-4 text-primary" />
+                Service Account JSON
+              </Label>
+              <Textarea 
+                id="googleServiceAccountJson" 
+                name="googleServiceAccountJson" 
+                defaultValue={settings?.googleServiceAccountJson} 
+                placeholder='{ "type": "service_account", ... }'
+                className="font-mono text-xs h-32"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Paste the contents of your Google Cloud Service Account JSON file. Ensure the service account has access to the template doc.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="flex items-center justify-between gap-4 bg-white p-4 rounded-xl border shadow-md sticky bottom-6 z-50">
           <div className="flex items-center gap-3">
             <ShieldCheck className="h-5 w-5 text-emerald-500" />
-            <p className="text-sm font-medium">Verify your connection before saving.</p>
+            <p className="text-sm font-bold text-slate-700">Verify your settings before sending offers.</p>
           </div>
-          <Button type="submit" size="lg" className="gap-2 px-8" disabled={saveMutation.isPending}>
+          <Button type="submit" size="lg" className="gap-2 px-10 font-black uppercase tracking-widest text-xs" disabled={saveMutation.isPending}>
             {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save Configuration
+            Save All Configuration
           </Button>
         </div>
       </form>
 
       <Separator />
 
-      <Card className="border-blue-100 bg-blue-50/20">
+      <Card className="border-blue-100 bg-blue-50/20 shadow-sm">
         <CardHeader>
           <div className="flex items-center gap-2">
             <Send className="h-5 w-5 text-blue-600" />
@@ -166,7 +210,7 @@ export default function EmailSettingsPage() {
             />
             <Button 
               variant="secondary" 
-              className="gap-2 bg-blue-600 text-white hover:bg-blue-700" 
+              className="gap-2 bg-blue-600 text-white hover:bg-blue-700 font-bold" 
               onClick={() => testMutation.mutate(testEmail)}
               disabled={!testEmail || testMutation.isPending}
             >
@@ -174,32 +218,6 @@ export default function EmailSettingsPage() {
               Send Test Email
             </Button>
           </div>
-        </CardContent>
-      </Card>
-      
-      <Card className="border-amber-100 bg-amber-50/20">
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <Bell className="h-5 w-5 text-amber-600" />
-            <CardTitle className="text-amber-900">Automated Triggers</CardTitle>
-          </div>
-          <CardDescription>Which events should trigger an automated email?</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          {[
-            { id: "reg", label: "Registration Confirmation", desc: "Sent when candidate submits form." },
-            { id: "int", label: "Interview Call Letter", desc: "Sent when candidate is batched." },
-            { id: "off", label: "Offer of Admission", desc: "Sent upon final selection." },
-            { id: "pay", label: "Payment Confirmation", desc: "Sent after Razorpay success." },
-          ].map(t => (
-            <div key={t.id} className="flex items-start gap-3 p-3 bg-white rounded-lg border border-amber-100">
-              <Switch defaultChecked />
-              <div>
-                <Label className="text-sm font-bold">{t.label}</Label>
-                <p className="text-[10px] text-muted-foreground">{t.desc}</p>
-              </div>
-            </div>
-          ))}
         </CardContent>
       </Card>
     </div>

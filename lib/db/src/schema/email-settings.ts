@@ -10,6 +10,8 @@ export const emailSettingsTable = pgTable("email_settings", {
   useSsl: boolean("use_ssl").notNull().default(false),
   fromName: text("from_name").notNull().default("Sankara Academy of Vision"),
   fromEmail: text("from_email").notNull().default(""),
+  googleDocsTemplateId: text("google_docs_template_id"),
+  googleServiceAccountJson: text("google_service_account_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

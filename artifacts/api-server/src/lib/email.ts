@@ -184,3 +184,34 @@ export async function sendOfferLetterEmail(opts: {
   });
 }
 
+export async function sendOfferLetterWithAttachment(opts: {
+  toEmail: string; toName: string; pdfBuffer: Buffer; fileName: string;
+}) {
+  const cfg = await getTransporter();
+  if (!cfg) return;
+
+  await cfg.transporter.sendMail({
+    from: `"${cfg.fromName}" <${cfg.from}>`,
+    to: opts.toEmail,
+    subject: `Admission Offer — Fellowship Program`,
+    attachments: [
+      {
+        filename: opts.fileName,
+        content: opts.pdfBuffer,
+        contentType: 'application/pdf'
+      }
+    ],
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:24px;border:1px solid #e5e7eb;border-radius:8px">
+        <h2 style="color:#1d4ed8;margin:0 0 8px">Admission Offer</h2>
+        <p style="color:#374151">Dear <strong>Dr. ${opts.toName}</strong>,</p>
+        <p style="color:#374151">Please find attached your formal offer letter for the Fellowship program at Sankara Academy of Vision.</p>
+        <p style="color:#374151">Kindly review the document and revert with your acceptance within 3 working days.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0" />
+        <p style="color:#9ca3af;font-size:12px;margin:0">Sankara Academy of Vision &bull; This is an automated message.</p>
+      </div>
+    `,
+  });
+}
+
+

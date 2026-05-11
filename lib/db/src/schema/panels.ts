@@ -9,6 +9,7 @@ export const interviewPanelsTable = pgTable("interview_panels", {
   roomNumber: text("room_number").notNull(),
   programId: integer("program_id").references(() => programsTable.id),
   isActive: boolean("is_active").notNull().default(true),
+  isMock: boolean("is_mock").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

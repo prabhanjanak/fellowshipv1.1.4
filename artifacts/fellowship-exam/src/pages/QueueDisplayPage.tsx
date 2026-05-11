@@ -1,21 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import {
   Loader2,
   Users,
   Monitor,
-  Clock,
   DoorOpen,
   UserCheck,
   Zap,
+  Building2,
+  CalendarDays,
+  Info,
+  Clock8,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { Input } from "../components/ui/input";
@@ -59,7 +59,7 @@ export default function QueueDisplayPage() {
   const { data: panels = [], isLoading: isLoadingPanels } = useQuery({
     queryKey: ["display-live"],
     queryFn: () => api.get<any[]>("/display/live"),
-    refetchInterval: 5000, // Refresh every 5 seconds for live feel
+    refetchInterval: 5000, 
     enabled: isVerified,
   });
 
@@ -73,32 +73,32 @@ export default function QueueDisplayPage() {
 
   if (!isVerified) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-slate-950" />
-        <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl relative z-10">
-          <CardHeader className="text-center space-y-4 pb-8">
-            <div className="mx-auto bg-white p-3 rounded-2xl w-24 h-24 flex items-center justify-center shadow-lg shadow-black/50">
-              <img src="/logo.png" alt="SAV Logo" className="w-16 object-contain" onError={(e) => e.currentTarget.style.display = 'none'} />
+      <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-4 font-sans">
+        <Card className="w-full max-w-md bg-white border-slate-200 shadow-2xl rounded-3xl overflow-hidden">
+          <div className="bg-primary p-8 text-center text-white">
+            <div className="mx-auto bg-white p-4 rounded-2xl w-24 h-24 flex items-center justify-center mb-4 shadow-lg">
+              <img src="/logo.png" alt="SAV Logo" className="w-16 object-contain" />
             </div>
-            <CardTitle className="text-2xl font-black text-white tracking-tight">Waiting Hall Display</CardTitle>
-            <p className="text-sm text-slate-400 font-medium">Please enter the 6-character access code to authorize this display.</p>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleVerify} className="space-y-6">
-              <div className="space-y-2">
+            <h2 className="text-2xl font-black uppercase tracking-tight">Display Console</h2>
+            <p className="text-primary-foreground/80 text-sm font-medium mt-1">Authorization Required</p>
+          </div>
+          <CardContent className="p-10">
+            <form onSubmit={handleVerify} className="space-y-8">
+              <div className="space-y-4">
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest text-center block">Enter 6-Digit TV Access Code</label>
                 <Input
                   autoFocus
                   type="text"
-                  placeholder="e.g. A7K2P9"
+                  placeholder="------"
                   maxLength={6}
                   value={accessCode}
                   onChange={(e) => { setAccessCode(e.target.value.toUpperCase()); setError(""); }}
-                  className="bg-slate-950 border-slate-800 h-14 text-center text-3xl font-black tracking-[0.25em] text-white uppercase placeholder:text-slate-700 focus-visible:ring-primary/50"
+                  className="h-20 text-center text-5xl font-black tracking-[0.4em] uppercase bg-slate-50 border-2 border-slate-200 focus:border-primary rounded-2xl"
                 />
-                {error && <p className="text-red-400 text-xs font-bold text-center mt-2">{error}</p>}
               </div>
-              <Button type="submit" disabled={verifying || accessCode.length < 6} className="w-full h-12 text-base font-black tracking-widest uppercase">
-                {verifying ? <Loader2 className="h-5 w-5 animate-spin" /> : "Authorize Display"}
+              {error && <p className="text-red-500 text-sm font-bold text-center">{error}</p>}
+              <Button type="submit" disabled={verifying || accessCode.length < 6} className="w-full h-16 text-xl font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-primary/20 transition-all active:scale-95">
+                {verifying ? "Verifying..." : "Authorize TV"}
               </Button>
             </form>
           </CardContent>
@@ -109,130 +109,162 @@ export default function QueueDisplayPage() {
 
   if (isLoadingPanels) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950 text-white">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+      <div className="flex items-center justify-center min-h-screen bg-slate-50">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-16 w-16 animate-spin text-primary mx-auto" />
+          <p className="text-slate-400 font-black uppercase tracking-widest animate-pulse">Syncing Hall Data...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-6 font-sans overflow-hidden flex flex-col">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8 border-b border-slate-800 pb-6">
-        <div className="flex items-center gap-6">
-           <div className="bg-white p-2 rounded-2xl">
-             <img src="/logo.png" alt="SAV Logo" className="h-16 object-contain" onError={(e) => e.currentTarget.style.display = 'none'} />
-           </div>
-           <div>
-            <div className="flex items-center gap-3 text-primary mb-1">
-              <Monitor className="h-8 w-8" />
-              <h1 className="text-4xl font-black uppercase tracking-tighter">Interview Dashboard</h1>
-            </div>
-            <div className="flex items-center gap-3">
-              <Badge className="bg-primary text-white font-black px-3 py-1 text-lg">{activeBatch.name}</Badge>
-              <p className="text-slate-400 text-xl font-medium">
-                Academic Year {activeBatch.academicYear} — Sankara Academy of Vision
-              </p>
+    <div className="h-screen bg-[#f1f5f9] text-[#1e293b] font-sans flex flex-col overflow-hidden select-none">
+      {/* INSTITUTIONAL HEADER - FIXED HEIGHT */}
+      <header className="h-[120px] bg-white border-b-4 border-primary shadow-lg flex items-center px-12 z-50">
+        <div className="flex items-center gap-10 flex-1">
+          <img src="/logo.png" alt="SAV Logo" className="h-16 w-auto object-contain" />
+          <div className="h-12 w-[2px] bg-slate-200" />
+          <div className="space-y-1">
+            <h1 className="text-3xl font-black tracking-tight text-slate-900 uppercase">Fellowship Admissions 2026</h1>
+            <div className="flex items-center gap-4">
+              <Badge className="bg-primary/10 text-primary border-0 text-sm font-black px-3 py-0.5 rounded-md">
+                {panels[0]?.batch?.name || activeBatch.name}
+              </Badge>
+              <div className="flex items-center gap-2 text-slate-500 font-bold text-sm">
+                <Building2 className="h-4 w-4 text-primary" />
+                {panels[0]?.batch?.venue || "Sankara Academy of Vision"}
+                {panels[0]?.batch?.segment && (
+                  <span className="text-slate-300 mx-2">|</span>
+                )}
+                {panels[0]?.batch?.segment && (
+                  <span className="text-primary font-black uppercase">{panels[0].batch.segment} Interviews</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-7xl font-black tracking-tighter tabular-nums text-emerald-400 leading-none">
-            {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </div>
-          <div className="text-slate-500 font-bold uppercase tracking-widest mt-2 text-lg">
-            {time.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
-          </div>
-        </div>
-      </div>
 
-      {/* Main Grid */}
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 overflow-hidden">
-        {panels.map((panel: any) => {
-          const currentCandidate = panel.current;
-          const waitingQueue = panel.nextQueue || [];
-          
-          return (
-            <Card key={panel.panelId} className={`bg-slate-900 border-2 shadow-2xl overflow-hidden relative flex flex-col ${currentCandidate ? 'border-primary/50' : 'border-slate-800'}`}>
-              {panel.isActive && (
-                <div className="absolute top-4 right-4 z-10">
-                   <Badge className="bg-emerald-500 text-slate-950 animate-pulse font-black text-sm px-3">LIVE</Badge>
+        <div className="flex items-center gap-10">
+          <div className="text-right border-r-2 border-slate-100 pr-10">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Current Date</p>
+            <div className="flex items-center gap-2 text-slate-600 font-bold">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              <span className="text-xl uppercase">{time.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-primary">
+            <Clock8 className="h-8 w-8" />
+            <div className="text-6xl font-black tracking-tighter tabular-nums leading-none">
+              {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* UNIFORM GRID LAYOUT */}
+      <main className="flex-1 p-10 overflow-hidden">
+        <div className="h-full grid grid-cols-4 gap-8">
+          {panels.slice(0, 4).map((panel: any) => {
+            const currentCandidate = panel.current;
+            const waitingQueue = panel.nextQueue || [];
+            
+            return (
+              <div key={panel.panelId} className="h-full flex flex-col bg-white rounded-[2rem] shadow-xl border border-slate-100 overflow-hidden">
+                {/* ROOM HEADER - UNIFORM SIZE */}
+                <div className="bg-slate-50 border-b border-slate-100 p-6 text-center shrink-0">
+                  <div className="inline-flex items-center gap-3 bg-white px-6 py-2 rounded-2xl shadow-sm border border-slate-200 mb-3">
+                    <DoorOpen className="h-5 w-5 text-primary" />
+                    <span className="text-2xl font-black text-slate-900">ROOM {panel.roomNumber}</span>
+                  </div>
+                  <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest truncate">
+                    {panel.panelName}
+                  </h3>
                 </div>
-              )}
-              
-              <CardHeader className="bg-slate-800/50 border-b border-slate-700 p-6">
-                <CardTitle className="flex items-center gap-4 text-3xl font-black">
-                  <div className="bg-primary text-white h-14 w-14 rounded-2xl flex items-center justify-center text-3xl shadow-lg shadow-primary/20 shrink-0">
-                    {panel.roomNumber}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-slate-300 text-xs font-bold uppercase tracking-widest mb-0.5">Interview Panel</div>
-                    <div className="truncate text-2xl">{panel.panelName}</div>
-                  </div>
-                </CardTitle>
-              </CardHeader>
 
-              <CardContent className="p-6 space-y-6 flex-1 flex flex-col justify-between">
-                {/* Now Interviewing */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-emerald-400 font-black text-sm uppercase tracking-widest">
-                    <UserCheck className="h-5 w-5" /> Now Interviewing
-                  </div>
-                  <div className={`rounded-3xl p-6 border transition-all duration-500 ${currentCandidate ? 'bg-emerald-500/10 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'bg-slate-800/50 border-slate-700'}`}>
-                    {currentCandidate ? (
-                      <div className="space-y-2 text-center">
-                        <div className="text-5xl font-black text-white tracking-tight break-words">{currentCandidate.candidateCode}</div>
-                        <div className="text-sm font-bold text-emerald-400 uppercase tracking-widest">
-                          PLEASE ENTER ROOM
-                        </div>
-                      </div>
+                {/* DOCTORS - FIXED HEIGHT SECTION */}
+                <div className="h-[80px] px-8 flex items-center justify-center border-b border-slate-50 shrink-0">
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {panel.members?.length > 0 ? (
+                      panel.members.slice(0, 2).map((m: string) => (
+                        <Badge key={m} variant="outline" className="bg-slate-50/50 text-slate-500 border-slate-100 font-bold text-[10px] px-3 py-1">
+                          DR. {m.toUpperCase()}
+                        </Badge>
+                      ))
                     ) : (
-                      <div className="text-3xl font-black text-slate-600 italic py-4 text-center">ROOM VACANT</div>
+                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Awaiting Assignment</span>
                     )}
                   </div>
                 </div>
 
-                {/* Next In Line */}
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-amber-400 font-black text-sm uppercase tracking-widest">
-                    <Zap className="h-5 w-5" /> Next In Queue
+                {/* NOW CALLING - CENTRAL FOCUS */}
+                <div className="flex-1 flex flex-col items-center justify-center p-8 gap-4 bg-white">
+                  <div className="flex items-center gap-2 text-emerald-500 font-black text-[10px] uppercase tracking-[0.3em] mb-2">
+                    <UserCheck className="h-4 w-4" /> Current Interview
                   </div>
-                  <div className="space-y-3">
-                    {waitingQueue.slice(0, 3).map((candidate: any, i: number) => (
-                      <div key={candidate.candidateCode} className={`flex items-center justify-between p-4 rounded-2xl border transition-all duration-300 ${i === 0 ? 'bg-amber-400/10 border-amber-400/30' : 'bg-slate-800/30 border-slate-800'}`}>
-                        <div className="flex items-center gap-4">
-                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-lg font-black ${i === 0 ? 'bg-amber-400 text-slate-950' : 'bg-slate-700 text-slate-400'}`}>
+                  
+                  {currentCandidate ? (
+                    <div className="text-center space-y-4 w-full">
+                      <div className="text-8xl font-black text-slate-900 tracking-tighter tabular-nums leading-none animate-in fade-in zoom-in duration-500">
+                        {currentCandidate.candidateCode}
+                      </div>
+                      <div className="inline-block bg-emerald-500 text-white font-black text-xs px-6 py-2 rounded-full shadow-lg shadow-emerald-200 animate-pulse uppercase tracking-[0.2em]">
+                        Please Enter Room
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center opacity-20">
+                      <div className="text-6xl font-black text-slate-400 italic">VACANT</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* QUEUE LIST - UNIFORM SPACING */}
+                <div className="bg-slate-50/50 p-8 border-t border-slate-100 shrink-0">
+                  <div className="flex items-center gap-2 text-primary font-black text-[10px] uppercase tracking-[0.3em] mb-6">
+                    <Zap className="h-4 w-4" /> Up Next
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {[0, 1, 2].map((i) => {
+                      const candidate = waitingQueue[i];
+                      return (
+                        <div key={i} className={`flex items-center gap-5 p-4 rounded-2xl border-2 transition-all ${candidate && i === 0 ? 'bg-white border-primary shadow-md' : 'bg-white/40 border-transparent opacity-40'}`}>
+                          <div className={`h-10 w-10 rounded-xl flex items-center justify-center text-lg font-black ${candidate && i === 0 ? 'bg-primary text-white shadow-md' : 'bg-slate-200 text-slate-400'}`}>
                             {i + 1}
                           </div>
-                          <div className={`font-mono text-2xl font-black ${i === 0 ? 'text-amber-400' : 'text-slate-400'}`}>
-                            {candidate.candidateCode}
+                          <div className={`text-3xl font-black tracking-tight ${candidate && i === 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                            {candidate?.candidateCode || "----"}
                           </div>
+                          {candidate && i === 0 && (
+                            <div className="ml-auto bg-primary/10 text-primary font-black text-[8px] px-2 py-1 rounded uppercase">Ready</div>
+                          )}
                         </div>
-                        {i === 0 && <Badge className="bg-amber-400 text-slate-950 font-black text-xs px-2 py-0.5">READY</Badge>}
-                      </div>
-                    ))}
-                    {waitingQueue.length === 0 && (
-                      <div className="text-slate-600 font-bold text-center py-6 bg-slate-800/20 rounded-2xl border border-dashed border-slate-700">
-                        NO CANDIDATES WAITING
-                      </div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Footer / Ticker */}
-      <div className="fixed bottom-0 left-0 right-0 bg-primary p-4 overflow-hidden">
-        <div className="flex items-center whitespace-nowrap animate-marquee text-white font-black uppercase tracking-widest text-lg">
-          <span className="mx-8">PLEASE KEEP YOUR MOBILE PHONES SILENT</span>
-          <span className="mx-8">KINDLY REPORT TO YOUR RESPECTIVE ROOMS 5 MINUTES BEFORE YOUR TURN</span>
-          <span className="mx-8">FOR ANY ASSISTANCE CONTACT THE HELP DESK AT RECEPTION</span>
-          <span className="mx-8">ALL THE BEST TO ALL CANDIDATES</span>
+              </div>
+            );
+          })}
         </div>
-      </div>
+      </main>
+
+      {/* CLEAN MARQUEE FOOTER */}
+      <footer className="h-16 bg-slate-900 flex items-center overflow-hidden shrink-0">
+        <div className="bg-primary h-full px-10 flex items-center gap-3 text-white font-black text-xl italic skew-x-[-20deg] ml-[-20px] pr-12 z-10 shadow-2xl">
+          <Info className="h-6 w-6 skew-x-[20deg]" /> 
+          <span className="skew-x-[20deg]">NOTICE</span>
+        </div>
+        <div className="flex-1 overflow-hidden">
+           <div className="flex items-center whitespace-nowrap animate-marquee text-white font-bold text-2xl uppercase tracking-[0.1em] opacity-80">
+              <span className="mx-20">KINDLY REPORT TO YOUR RESPECTIVE ROOMS 5 MINUTES BEFORE YOUR TURN</span>
+              <span className="mx-20">PLEASE KEEP YOUR MOBILE PHONES IN SILENT MODE</span>
+              <span className="mx-20">ALL THE BEST TO ALL CANDIDATES FROM SANKARA ACADEMY OF VISION</span>
+              <span className="mx-20">CONTACT THE HELP DESK FOR ANY QUERIES OR ASSISTANCE</span>
+           </div>
+        </div>
+      </footer>
 
       <style>{`
         @keyframes marquee {
@@ -240,10 +272,9 @@ export default function QueueDisplayPage() {
           100% { transform: translateX(-100%); }
         }
         .animate-marquee {
-          animation: marquee 30s linear infinite;
+          animation: marquee 50s linear infinite;
         }
       `}</style>
     </div>
   );
 }
-

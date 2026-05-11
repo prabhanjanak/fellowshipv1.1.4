@@ -124,6 +124,10 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
       const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
       return sub?.centerPreference ?? null;
     })(),
+    submissionId: await (async () => {
+      const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
+      return sub?.id ?? null;
+    })(),
     reviewNotes: await (async () => {
       const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
       return sub?.reviewNotes ?? null;
@@ -143,7 +147,9 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
     effectiveUnit = u?.unitId ?? -1;
   }
 
-  let candidates = await db.select().from(candidatesTable).orderBy(desc(candidatesTable.createdAt));
+  let candidates = await db.select().from(candidatesTable)
+    .where(eq(candidatesTable.isMock, (req as any).isMockMode))
+    .orderBy(desc(candidatesTable.createdAt));
   if (effectiveUnit !== undefined) candidates = candidates.filter((c) => c.unitId === effectiveUnit);
   if (status) candidates = candidates.filter((c) => c.status === status);
 
@@ -201,6 +207,10 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
       centerPreference: (() => {
         const sub = allSubmissions.find(s => s.email === c.email);
         return sub?.centerPreference ?? null;
+      })(),
+      submissionId: (() => {
+        const sub = allSubmissions.find(s => s.email === c.email);
+        return sub?.id ?? null;
       })(),
       reviewNotes: (() => {
         const sub = allSubmissions.find(s => s.email === c.email);

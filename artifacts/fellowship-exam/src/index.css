@@ -166,57 +166,7 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
 }
 
-.dark {
-  --button-outline: rgba(255,255,255, .10);
-  --badge-outline: rgba(255,255,255, .05);
-  --opaque-button-border-intensity: 9;
-  --elevate-1: rgba(255,255,255, .04);
-  --elevate-2: rgba(255,255,255, .09);
-
-  --background: 215 50% 8%;
-  --foreground: 0 0% 92%;
-  --border: 215 30% 20%;
-  --card: 215 45% 11%;
-  --card-foreground: 0 0% 92%;
-  --card-border: 215 30% 20%;
-  --sidebar: 215 60% 7%;
-  --sidebar-foreground: 0 0% 90%;
-  --sidebar-border: 215 50% 5%;
-  --sidebar-primary: 26 100% 55%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 215 45% 15%;
-  --sidebar-accent-foreground: 0 0% 85%;
-  --sidebar-ring: 26 100% 60%;
-  --popover: 215 45% 11%;
-  --popover-foreground: 0 0% 92%;
-  --popover-border: 215 30% 20%;
-  --primary: 26 100% 55%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 215 40% 18%;
-  --secondary-foreground: 0 0% 80%;
-  --muted: 215 40% 15%;
-  --muted-foreground: 215 20% 55%;
-  --accent: 215 40% 18%;
-  --accent-foreground: 26 100% 70%;
-  --destructive: 0 75% 50%;
-  --destructive-foreground: 0 0% 100%;
-  --input: 215 30% 22%;
-  --ring: 26 100% 55%;
-  --chart-1: 26 100% 55%;
-  --chart-2: 215 64% 50%;
-  --chart-3: 142 70% 50%;
-  --chart-4: 330 80% 60%;
-  --chart-5: 200 80% 55%;
-
-  --shadow-2xs: 0px 1px 2px 0px rgba(0, 0, 0, 0.30);
-  --shadow-xs: 0px 1px 3px 0px rgba(0, 0, 0, 0.35);
-  --shadow-sm: 0px 1px 3px 0px rgba(0, 0, 0, 0.35), 0px 1px 2px -1px rgba(0, 0, 0, 0.30);
-  --shadow: 0px 2px 6px 0px rgba(0, 0, 0, 0.40), 0px 1px 2px -1px rgba(0, 0, 0, 0.30);
-  --shadow-md: 0px 4px 8px -1px rgba(0, 0, 0, 0.45), 0px 2px 4px -1px rgba(0, 0, 0, 0.30);
-  --shadow-lg: 0px 8px 16px -2px rgba(0, 0, 0, 0.50), 0px 4px 6px -1px rgba(0, 0, 0, 0.30);
-  --shadow-xl: 0px 16px 24px -4px rgba(0, 0, 0, 0.55), 0px 8px 10px -1px rgba(0, 0, 0, 0.35);
-  --shadow-2xl: 0px 24px 48px -8px rgba(0, 0, 0, 0.60);
-}
+/* Dark mode removed per user request */
 
 @layer base {
   * {

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db, examsTable, questionsTable, programsTable, candidatesTable, candidateExamAssignmentsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -8,7 +8,7 @@ const router: Router = Router();
 router.get("/exams", requireAuth, async (req, res) => {
   const programId = req.query["programId"] ? Number(req.query["programId"]) : undefined;
   const kind = req.query["kind"] as string | undefined;
-  let exams = await db.select().from(examsTable);
+  let exams = await db.select().from(examsTable).where(eq(examsTable.isMock, (req as any).isMockMode));
 
   // Students only see exams that have been explicitly assigned to them
   if (req.user!.role === "student") {
@@ -44,44 +44,62 @@ router.get("/exams", requireAuth, async (req, res) => {
 });
 
 router.post("/exams", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
-  const body = req.body as {
-    title: string;
-    kind: string;
-    programId?: number | null;
-    durationMinutes: number;
-    totalQuestions: number;
-    passingScore?: number;
-    description?: string;
-    startsAt?: string;
-    endsAt?: string;
-  };
-  if (!body.title || !body.kind) { res.status(400).json({ error: "Missing fields" }); return; }
-  const [e] = await db.insert(examsTable).values({
-    title: body.title,
-    kind: body.kind,
-    programId: body.programId ?? null,
-    durationMinutes: body.durationMinutes ?? 60,
-    totalQuestions: body.totalQuestions ?? 20,
-    passingScore: body.passingScore ?? null,
-    description: body.description ?? null,
-    startsAt: body.startsAt ? new Date(body.startsAt) : null,
-    endsAt: body.endsAt ? new Date(body.endsAt) : null,
-  }).returning();
-  if (!e) { res.status(500).json({ error: "Failed" }); return; }
-  res.json({
-    id: e.id,
-    title: e.title,
-    kind: e.kind,
-    programId: e.programId,
-    programName: null,
-    durationMinutes: e.durationMinutes,
-    totalQuestions: e.totalQuestions,
-    questionCount: 0,
-    passingScore: e.passingScore,
-    active: e.active,
-    startsAt: e.startsAt?.toISOString() ?? null,
-    endsAt: e.endsAt?.toISOString() ?? null,
-  });
+  try {
+    const {
+      title,
+      kind,
+      programId,
+      durationMinutes,
+      totalQuestions,
+      passingScore,
+      description,
+      startsAt,
+      endsAt
+    } = req.body;
+
+    if (!title || !kind) {
+      return res.status(400).json({ error: "Missing title or type" });
+    }
+
+    const dur = Number(durationMinutes) || 60;
+    const tq = Number(totalQuestions) || 20;
+    const ps = passingScore != null ? Number(passingScore) : null;
+    const pid = programId && !isNaN(Number(programId)) ? Number(programId) : null;
+    const start = startsAt ? new Date(startsAt) : null;
+    const end = endsAt ? new Date(endsAt) : null;
+
+    // Use raw SQL to bypass the potentially outdated compiled schema in dist/
+    const result = await db.execute(sql`
+      INSERT INTO exams (
+        title, kind, program_id, duration_minutes, total_questions, 
+        passing_score, description, starts_at, ends_at, active
+      ) VALUES (
+        ${title}, ${kind}, ${pid}, ${dur}, ${tq}, 
+        ${ps}, ${description || null}, ${start}, ${end}, true
+      ) RETURNING *
+    `);
+
+    const e = result.rows[0];
+    if (!e) throw new Error("Database insertion failed");
+
+    res.json({
+      id: e.id,
+      title: e.title,
+      kind: e.kind,
+      programId: e.program_id,
+      programName: null,
+      durationMinutes: e.duration_minutes,
+      totalQuestions: e.total_questions,
+      questionCount: 0,
+      passingScore: e.passing_score,
+      active: e.active,
+      startsAt: e.starts_at instanceof Date ? e.starts_at.toISOString() : (e.starts_at || null),
+      endsAt: e.ends_at instanceof Date ? e.ends_at.toISOString() : (e.ends_at || null),
+    });
+  } catch (error: any) {
+    console.error("[POST /exams] error:", error);
+    res.status(500).json({ error: error.message || "Failed to create exam" });
+  }
 });
 
 router.get("/exams/:examId", requireAuth, async (req, res) => {
@@ -105,6 +123,36 @@ router.get("/exams/:examId", requireAuth, async (req, res) => {
     startsAt: e.startsAt?.toISOString() ?? null,
     endsAt: e.endsAt?.toISOString() ?? null,
     description: e.description,
+  });
+});
+
+router.delete("/exams/:examId", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const id = Number(req.params["examId"]);
+    // Cleanup answers first (linked to attempts)
+    await db.execute(sql`DELETE FROM exam_answers WHERE attempt_id IN (SELECT id FROM exam_attempts WHERE exam_id = ${id})`);
+    // Cleanup assignments and attempts
+    await db.execute(sql`DELETE FROM candidate_exam_assignments WHERE exam_id = ${id}`);
+    await db.execute(sql`DELETE FROM exam_attempts WHERE exam_id = ${id}`);
+    await db.execute(sql`DELETE FROM questions WHERE exam_id = ${id}`);
+    await db.execute(sql`DELETE FROM exams WHERE id = ${id}`);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Delete exam error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/exams/:examId/stats", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  const id = Number(req.params["examId"]);
+  const assignments = await db.execute(sql`SELECT COUNT(*) as count FROM candidate_exam_assignments WHERE exam_id = ${id}`);
+  const completed = await db.execute(sql`SELECT COUNT(*) as count FROM candidate_exam_results WHERE exam_id = ${id}`);
+  const [avgScore] = (await db.execute(sql`SELECT AVG(score) as avg FROM candidate_exam_results WHERE exam_id = ${id}`)).rows;
+
+  res.json({
+    totalAssigned: Number(assignments.rows[0]?.["count"] ?? 0),
+    totalCompleted: Number(completed.rows[0]?.["count"] ?? 0),
+    averageScore: Number(avgScore?.["avg"] ?? 0),
   });
 });
 

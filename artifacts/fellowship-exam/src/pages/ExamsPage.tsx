@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
 import { Card, CardContent } from "../components/ui/card";
@@ -9,7 +10,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { Plus, BookOpen, Clock, HelpCircle } from "lucide-react";
+import { Plus, BookOpen, Clock, HelpCircle, Trash2 } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 
 interface Exam {
@@ -31,6 +32,7 @@ export default function ExamsPage() {
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const [addOpen, setAddOpen] = useState(false);
 
   const [form, setForm] = useState({
@@ -50,6 +52,15 @@ export default function ExamsPage() {
       qc.invalidateQueries({ queryKey: ["exams"] });
       setAddOpen(false);
       setForm({ title: "", kind: "mcq", programId: "", durationMinutes: "60", totalQuestions: "20", passingScore: "", description: "" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => api.delete(`/exams/${id}`),
+    onSuccess: () => {
+      toast({ title: "Exam deleted" });
+      qc.invalidateQueries({ queryKey: ["exams"] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -90,13 +101,34 @@ export default function ExamsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {exams.map((e) => (
-            <Card key={e.id} className="hover:shadow-md transition-shadow">
+            <Card 
+              key={e.id} 
+              className="hover:shadow-md transition-shadow cursor-pointer group"
+              onClick={() => navigate(`/exams/${e.id}`)}
+            >
               <CardContent className="pt-4 space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold text-sm leading-tight">{e.title}</h3>
-                  <Badge className={kindColor[e.kind] ?? "bg-gray-100 text-gray-800"} variant="secondary">
-                    {kindLabel[e.kind] ?? e.kind}
-                  </Badge>
+                  <div className="flex items-center gap-1">
+                    <Badge className={kindColor[e.kind] ?? "bg-gray-100 text-gray-800"} variant="secondary">
+                      {kindLabel[e.kind] ?? e.kind}
+                    </Badge>
+                    {canManage && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(evt) => {
+                          evt.stopPropagation();
+                          if (confirm(`Are you sure you want to delete "${e.title}"?`)) {
+                            deleteMutation.mutate(e.id);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {e.programName && (
                   <p className="text-xs text-muted-foreground">{e.programName}</p>

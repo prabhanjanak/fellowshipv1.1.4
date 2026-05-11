@@ -16,7 +16,7 @@ import { Separator } from "../components/ui/separator";
 import {
   Plus, Link2, Copy, Check, Eye, Users, Clock, ChevronRight, ArrowLeft, ExternalLink,
   FileCheck, FileX, Loader2, Trash2, Download, CreditCard, GripVertical, Settings2, X as XIcon,
-  RefreshCw, CheckCheck, Ban, FileText, ImageIcon, ChevronDown, ChevronUp,
+  RefreshCw, CheckCheck, Ban, FileText, ImageIcon, ChevronDown, ChevronUp, Building2, Printer,
 } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 
@@ -72,13 +72,34 @@ function parseSpecializations(spec: string | null | undefined): string[] {
   return spec.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-/** Parse centerPreference field — may be a JSON object keyed by specialization, or plain string */
-function parseCenterPreferences(cp: string | null | undefined): Record<string, string> {
-  if (!cp) return {};
-  try {
-    const parsed: unknown = JSON.parse(cp);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>;
-  } catch { /* not JSON */ }
+/** Parse center preference field — may be JSON or needs fallback to customAnswers */
+function parseCenterPreferences(cp: string | null | undefined, customAnswers?: any, sections?: any[]): Record<string, string> {
+  if (cp) {
+    try {
+      const parsed: unknown = JSON.parse(cp);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>;
+    } catch { /* not JSON or invalid */ }
+  }
+  
+  // Fallback: search customAnswers for unit_* fields
+  if (customAnswers && typeof customAnswers === "object") {
+    const prefs: Record<string, string> = {};
+    Object.entries(customAnswers).forEach(([key, val]) => {
+      if (key.startsWith("unit_") && val) {
+        let label = key.replace("unit_", "").replace(/_/g, " ").toUpperCase();
+        // Try to find the real label from sectionsConfig
+        if (sections) {
+          sections.forEach(sec => {
+            sec.fields?.forEach((f: any) => {
+              if (f.id === key) label = f.label.replace(" Preferred Center", "");
+            });
+          });
+        }
+        prefs[label] = Array.isArray(val) ? val.join(", ") : String(val);
+      }
+    });
+    return prefs;
+  }
   return {};
 }
 
@@ -658,34 +679,47 @@ export default function ApplicationFormsPage() {
             <ArrowLeft className="h-4 w-4" /> Submissions
           </Button>
           <Badge className={STATUS_COLORS[viewedSub.status] ?? ""}>{viewedSub.status}</Badge>
-          <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-1 ml-auto">
-            <Download className="h-4 w-4" /> Download Application PDF
-          </Button>
+          <div className="flex gap-2 ml-auto no-print">
+            <Button 
+              variant="default" 
+              size="sm" 
+              onClick={() => window.print()} 
+              className="gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 shadow-lg shadow-slate-200"
+            >
+              <Printer className="h-4 w-4" /> Print Only
+            </Button>
+          </div>
         </div>
-        {/* Specialization(s) banner — prominently shown at the top */}
+        {/* Specialization(s) & Preferred Centers banner — prominently shown at the top */}
         {(() => {
           const specs = parseSpecializations(viewedSub.specialization);
-          const centerPrefs = parseCenterPreferences(viewedSub.centerPreference);
+          const centerPrefs = parseCenterPreferences(viewedSub.centerPreference, viewedSub.customAnswers, viewedForm?.sectionsConfig);
           if (specs.length === 0) return null;
           return (
-            <div className={`rounded-lg border p-4 ${specs.length > 1 ? "border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800" : "border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800"}`}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm font-semibold">
-                  {specs.length > 1 ? `Applied for ${specs.length} Specializations` : "Applied Specialization"}
-                </span>
-                {specs.length > 1 && (
-                  <span className="text-xs bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-100 px-1.5 py-0.5 rounded-full font-medium">
-                    Multi-Specialization
-                  </span>
-                )}
+            <div className={`rounded-lg border p-5 ${specs.length > 1 ? "border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800" : "border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800"}`}>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black uppercase tracking-widest text-slate-500">Applied Specialization & Center Preference</span>
+                  {specs.length > 1 && (
+                    <Badge className="bg-orange-200 text-orange-900 border-none text-[10px] h-5">Multi-Specialization</Badge>
+                  )}
+                </div>
+                <Badge variant="outline" className="text-[10px] font-mono">{viewedSub.status.toUpperCase()}</Badge>
               </div>
-              <div className="flex flex-wrap gap-2">
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {specs.map((sp) => (
-                  <div key={sp} className="flex flex-col gap-0.5">
-                    <span className={`inline-block text-sm px-2.5 py-1 rounded-md font-medium ${SPEC_BADGE_COLORS[sp] ?? "bg-gray-100 text-gray-700"}`}>{sp}</span>
-                    {centerPrefs[sp] && (
-                      <span className="text-xs text-muted-foreground pl-1">→ {centerPrefs[sp]}</span>
-                    )}
+                  <div key={sp} className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 shadow-sm flex flex-col gap-2">
+                    <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-black uppercase tracking-tighter w-fit ${SPEC_BADGE_COLORS[sp] ?? "bg-gray-100 text-gray-700"}`}>
+                      {sp}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Building2 className="h-4 w-4 text-primary" />
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Preferred Location</span>
+                        <span className="text-sm font-bold text-slate-800">{centerPrefs[sp] || "No preference set"}</span>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>

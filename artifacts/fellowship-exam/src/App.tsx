@@ -11,6 +11,7 @@ import ForcePasswordResetPage from "./pages/ForcePasswordResetPage";
 import DashboardPage from "./pages/DashboardPage";
 import CandidatesPage from "./pages/CandidatesPage";
 import ExamsPage from "./pages/ExamsPage";
+import ExamDashboardPage from "./pages/ExamDashboardPage";
 import ProgramsPage from "./pages/ProgramsPage";
 import UsersPage from "./pages/UsersPage";
 import InterviewsPage from "./pages/InterviewsPage";
@@ -67,6 +68,7 @@ function AppRouter() {
             <Route path="/users" component={UsersPage} />
             <Route path="/candidates" component={CandidatesPage} />
             <Route path="/exams" component={ExamsPage} />
+            <Route path="/exams/:id" component={ExamDashboardPage} />
             <Route path="/interviews" component={InterviewsPage} />
             <Route path="/rankings" component={RankingsPage} />
             <Route path="/allocations" component={AllocationsPage} />

@@ -26,6 +26,7 @@ export const usersTable = pgTable("users", {
   unitId: integer("unit_id"),
   programId: integer("program_id"),
   active: boolean("active").notNull().default(true),
+  isMock: boolean("is_mock").notNull().default(false),
   forcePasswordReset: boolean("force_password_reset").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

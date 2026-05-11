@@ -10,6 +10,7 @@ import { google } from "googleapis";
 import fs from "fs/promises";
 import { createWriteStream } from "fs";
 import path from "path";
+import PDFDocument from "pdfkit";
 
 const router: Router = Router();
 
@@ -24,6 +25,220 @@ function checkCompleteness(sub: {
 }): boolean {
   return !!(sub.fullName && sub.email && sub.phone && sub.degree && sub.medicalCollege && sub.lor1Url && sub.lor2Url && sub.photoUrl);
 }
+
+// Admin: generate application PDF
+router.get(
+  "/application-forms/submissions/:id/pdf",
+  requireAuth,
+  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.id, id));
+      if (!sub) return res.status(404).json({ error: "Submission not found" });
+
+      const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, sub.formId));
+      const [program] = form ? await db.select().from(programsTable).where(eq(programsTable.id, form.programId)) : [null];
+
+      const doc = new PDFDocument({ 
+        margin: 50, 
+        size: 'A4',
+        info: { Title: `Application - ${sub.fullName}`, Author: 'Sankara Academy of Vision' }
+      });
+      const filename = `Application_${sub.fullName.replace(/\s+/g, '_')}_${id}.pdf`;
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=${filename}`);
+      doc.pipe(res);
+
+      // --- PDF THEME & HELPERS ---
+      const colors = {
+        primary: '#0f172a',    // Slate 900
+        secondary: '#475569',  // Slate 600
+        accent: '#2563eb',     // Blue 600
+        muted: '#94a3b8',      // Slate 400
+        border: '#e2e8f0'      // Slate 200
+      };
+
+      const drawSectionHeader = (title: string) => {
+        doc.moveDown(1.5);
+        const y = doc.y;
+        doc.rect(50, y, 500, 20).fill('#f8fafc');
+        doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(11).text(title.toUpperCase(), 60, y + 5);
+        doc.strokeColor(colors.border).lineWidth(0.5).moveTo(50, y + 20).lineTo(550, y + 20).stroke();
+        doc.moveDown(0.8);
+      };
+
+      const renderRow = (label: string, value: any, options: { width?: number; continued?: boolean } = {}) => {
+        const valText = (value === null || value === undefined || value === "null") ? "—" : String(value);
+        doc.fillColor(colors.secondary).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), { continued: true });
+        doc.fillColor(colors.primary).font('Helvetica').fontSize(10).text(` : ${valText}`, options);
+      };
+
+      const parseSpecializations = (spec: string | null | undefined): string[] => {
+        if (!spec) return [];
+        try {
+          const parsed = JSON.parse(spec);
+          if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+        } catch { }
+        return spec.split(",").map((s) => s.trim()).filter(Boolean);
+      };
+
+      const parseCenterPreferences = (cp: string | null | undefined, customAnswers?: any, sections?: any[]): Record<string, string> => {
+        if (cp) {
+          try {
+            const parsed = JSON.parse(cp);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+          } catch { }
+        }
+        if (customAnswers && typeof customAnswers === "object") {
+          const prefs: Record<string, string> = {};
+          Object.entries(customAnswers).forEach(([key, val]) => {
+            if (key.startsWith("unit_") && val) {
+              let label = key.replace("unit_", "").replace(/_/g, " ").toUpperCase();
+              if (sections) {
+                sections.forEach((sec: any) => {
+                  sec.fields?.forEach((f: any) => {
+                    if (f.id === key) label = f.label.replace(" Preferred Center", "");
+                  });
+                });
+              }
+              prefs[label] = Array.isArray(val) ? val.join(", ") : String(val);
+            }
+          });
+          return prefs;
+        }
+        return {};
+      };
+
+      // --- HEADER ---
+      doc.fillColor(colors.accent).font('Helvetica-Bold').fontSize(22).text('SANKARA ACADEMY OF VISION', { align: 'left' });
+      doc.fillColor(colors.primary).font('Helvetica').fontSize(10).text('Educational unit of Sankara Eye Foundation, India', { align: 'left' });
+      doc.moveDown(0.2);
+      doc.fillColor(colors.muted).fontSize(9).text('FELLOWSHIP PROGRAM ADMISSIONS', { align: 'left' });
+      
+      doc.strokeColor(colors.accent).lineWidth(2).moveTo(50, doc.y + 10).lineTo(550, doc.y + 10).stroke();
+      doc.moveDown(2);
+
+      // --- CANDIDATE PHOTO ---
+      const photoUrl = sub.photoUrl;
+      if (photoUrl && photoUrl.startsWith("/objects/")) {
+        const localPath = path.join(process.cwd(), "uploads", photoUrl.replace("/objects/", ""));
+        try {
+          doc.image(localPath, 460, 120, { width: 90, height: 110 });
+          doc.rect(460, 120, 90, 110).strokeColor(colors.border).lineWidth(1).stroke();
+        } catch (e) {
+          doc.rect(460, 120, 90, 110).fill('#f1f5f9');
+          doc.fillColor(colors.muted).fontSize(8).text('PHOTO NOT AVAILABLE', 465, 165, { width: 80, align: 'center' });
+        }
+      } else {
+        doc.rect(460, 120, 90, 110).fill('#f1f5f9');
+        doc.fillColor(colors.muted).fontSize(8).text('NO PHOTO UPLOADED', 465, 165, { width: 80, align: 'center' });
+      }
+
+      // --- BASIC INFO ---
+      doc.y = 120; // Align with photo top
+      doc.fillColor(colors.accent).font('Helvetica-Bold').fontSize(14).text('APPLICATION RECORD');
+      doc.moveDown(0.5);
+      renderRow('Application ID', id);
+      renderRow('Program', program?.name || 'Fellowship Program');
+      renderRow('Submission Date', sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A');
+      renderRow('Status', sub.status.toUpperCase());
+      
+      drawSectionHeader('Personal Details');
+      renderRow('Full Name', sub.fullName);
+      renderRow('Email Address', sub.email);
+      renderRow('Phone Number', sub.phone);
+      renderRow('Date of Birth', sub.dateOfBirth);
+      renderRow('Gender', sub.gender);
+      renderRow('Marital Status', sub.maritalStatus);
+      renderRow('Permanent Address', sub.permanentAddress);
+
+      drawSectionHeader('Academic & Professional Qualifications');
+      renderRow('Basic Degree', sub.degree);
+      renderRow('Medical College', sub.medicalCollege);
+      renderRow('University', sub.university);
+      renderRow('PG Qualifications', sub.pgQualifications);
+      renderRow('Medical Council Reg No', sub.medicalCouncilNumber);
+
+      drawSectionHeader('Specialization & Center Preferences');
+      const specs = parseSpecializations(sub.specialization);
+      const centerPrefs = parseCenterPreferences(sub.centerPreference, sub.customAnswers, form?.sectionsConfig);
+      
+      if (specs.length === 0) {
+        doc.fillColor(colors.secondary).font('Helvetica').fontSize(10).text('No specializations selected.');
+      } else {
+        specs.forEach((sp, idx) => {
+          doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(10).text(`${idx + 1}. ${sp}`, { continued: true });
+          doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text(`  - Preferred Center: ${centerPrefs[sp] || 'No preference'}`);
+          doc.moveDown(0.3);
+        });
+      }
+
+      if (sub.diagnosticSkills) {
+        drawSectionHeader('Diagnostic Skills');
+        try {
+          const skills = typeof sub.diagnosticSkills === 'string' ? JSON.parse(sub.diagnosticSkills) : sub.diagnosticSkills;
+          Object.entries(skills).forEach(([skill, val]: any) => {
+            renderRow(skill, val);
+          });
+        } catch {
+          doc.fontSize(10).text(String(sub.diagnosticSkills));
+        }
+      }
+
+      if (sub.surgicalExperience) {
+        drawSectionHeader('Surgical Experience');
+        try {
+          const exp = typeof sub.surgicalExperience === 'string' ? JSON.parse(sub.surgicalExperience) : sub.surgicalExperience;
+          Object.entries(exp).forEach(([cat, val]: any) => {
+            doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(9).text(cat.toUpperCase(), { continued: true });
+            doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text(` | Supervision: ${val.supervision || 0} | Independent: ${val.independent || 0}`);
+            doc.moveDown(0.2);
+          });
+        } catch {
+          doc.fontSize(10).text(String(sub.surgicalExperience));
+        }
+      }
+
+      drawSectionHeader('References & Documents');
+      renderRow('Reference 1 (LOR)', `${sub.lor1RefName || '—'} (${sub.lor1RefContact || 'No contact'})`);
+      renderRow('Reference 2 (LOR)', `${sub.lor2RefName || '—'} (${sub.lor2RefContact || 'No contact'})`);
+      
+      const docList = [];
+      if (sub.lor1Url) docList.push('LOR 1');
+      if (sub.lor2Url) docList.push('LOR 2');
+      if (sub.photoUrl) docList.push('Photo');
+      if (sub.paymentUrl) docList.push('Payment Receipt');
+      renderRow('Uploaded Files', docList.length > 0 ? docList.join(', ') : 'No documents uploaded');
+
+      drawSectionHeader('Declaration & Submission');
+      renderRow('Payment ID', sub.paymentId || '—');
+      renderRow('Payment Mode', sub.paymentMode?.toUpperCase() || '—');
+      renderRow('Referral Source', sub.referralSource || '—');
+      doc.moveDown(0.5);
+      doc.fillColor(colors.secondary).font('Helvetica-Oblique').fontSize(8).text(
+        'Declaration: I hereby declare that the information provided above is true to the best of my knowledge and belief.',
+        { width: 450 }
+      );
+
+      // --- PAGE NUMBERS ---
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        doc.fillColor(colors.muted).fontSize(8).text(
+          `Page ${i + 1} of ${range.count} | Generated for official records by SAV Admisssions Portal`,
+          50, 780, { align: 'center' }
+        );
+      }
+
+      doc.end();
+    } catch (e: any) {
+      console.error("[pdf-gen] error:", e);
+      if (!res.headersSent) res.status(500).json({ error: "Failed to generate PDF" });
+    }
+  }
+);
 
 router.get(
   "/application-forms",
@@ -125,12 +340,12 @@ router.get(
   "/application-forms/:id/submissions",
   requireAuth,
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
-  async (req, res) => {
+  async (req: any, res) => {
     const formId = Number(req.params.id);
     const subs = await db
       .select()
       .from(applicationSubmissionsTable)
-      .where(eq(applicationSubmissionsTable.formId, formId))
+      .where(and(eq(applicationSubmissionsTable.formId, formId), eq(applicationSubmissionsTable.isMock, req.isMockMode)))
       .orderBy(desc(applicationSubmissionsTable.submittedAt));
     res.json(subs);
   }
@@ -1173,11 +1388,18 @@ router.post("/apply/:token", async (req, res) => {
   };
 
   // Map fields from body based on sectionsConfig
+  const centerPrefs: Record<string, string> = {};
   sections.forEach((sec: any) => {
     if (!sec.enabled) return;
     sec.fields.forEach((f: any) => {
       let val = body[f.id];
       if (val === undefined) return;
+
+      // Special aggregate for unit preferences if centerPreference is not explicitly set
+      if (f.id.startsWith("unit_") && val) {
+        const specName = f.label.replace(" Preferred Center", "");
+        centerPrefs[specName] = Array.isArray(val) ? val.join(", ") : String(val);
+      }
 
       // If standard mapping exists, use it
       if (f.isStandard && f.mapping) {
@@ -1192,6 +1414,10 @@ router.post("/apply/:token", async (req, res) => {
       }
     });
   });
+
+  if (Object.keys(centerPrefs).length > 0 && !subData.centerPreference) {
+    subData.centerPreference = JSON.stringify(centerPrefs);
+  }
 
   // Fallback for mandatory fields if not mapped
   if (!subData.fullName && body.fullName) subData.fullName = body.fullName;
@@ -1224,6 +1450,7 @@ router.post("/apply/:token", async (req, res) => {
 
   res.status(201).json({ success: true, submissionId: sub!.id });
 });
+
 
 // Admin: delete submission
 router.delete(

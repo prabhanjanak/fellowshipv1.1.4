@@ -196,6 +196,94 @@ function ResetDatabaseDialog({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
+function MockDataToggle() {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const { data: mode, refetch } = useQuery({
+    queryKey: ["mock-mode"],
+    queryFn: () => api.get<{ enabled: boolean }>("/debug/mock-mode"),
+  });
+
+  const handleToggle = async () => {
+    setLoading(true);
+    try {
+      if (!mode?.enabled) {
+        // If enabling, we might need to seed. The backend handles "seed if missing",
+        // but for a better UX we can explicitly call seed if we want "fresh" mock data.
+        // But user said "no reset", so we'll just toggle.
+        const res = await api.post<{ enabled: boolean; message: string }>("/debug/toggle-mock", {});
+        toast({ title: res.message });
+        // If it was just enabled and message says "need seed", we could trigger it.
+        // But my backend toggle-mock handles it.
+        refetch();
+        window.location.reload(); 
+      } else {
+        const res = await api.post<{ enabled: boolean; message: string }>("/debug/toggle-mock", {});
+        toast({ title: res.message });
+        refetch();
+        window.location.reload();
+      }
+    } catch (err) {
+      toast({ title: "Error", description: err instanceof Error ? err.message : "Action failed", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className={`border-2 transition-colors ${mode?.enabled ? "border-amber-200 bg-amber-50/30" : "border-slate-200"}`}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Database className={`h-5 w-5 ${mode?.enabled ? "text-amber-600" : "text-slate-400"}`} />
+            <div>
+              <CardTitle className="text-base">Mock Data Mode</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">Toggle between Live and Mock data without resetting.</p>
+            </div>
+          </div>
+        <div className="flex gap-2">
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const res = await api.post<{ message: string }>("/debug/init-july-2026", {});
+                toast({ title: res.message });
+              } catch (err) {
+                toast({ title: "Error", description: String(err), variant: "destructive" });
+              } finally {
+                setLoading(false);
+              }
+            }}
+            disabled={loading}
+          >
+            {loading ? "Initializing..." : "Initialize July 2026"}
+          </Button>
+          <Button 
+            size="sm" 
+            variant={mode?.enabled ? "secondary" : "default"} 
+            onClick={handleToggle}
+            disabled={loading}
+            className="font-bold"
+          >
+            {loading ? "Processing..." : mode?.enabled ? "Disable Mock Mode" : "Enable Mock Mode"}
+          </Button>
+        </div>
+        </div>
+      </CardHeader>
+      {mode?.enabled && (
+        <CardContent>
+          <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-100/50 p-2 rounded-md border border-amber-200">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <p>System is currently showing test data. This includes mock doctors, coordinators, and programs.</p>
+          </div>
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 export default function ProfilePage() {
   const { user } = useAuth();
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
@@ -228,6 +316,8 @@ export default function ProfilePage() {
           </Button>
         </div>
       </div>
+
+      {user?.role === "super_admin" && <MockDataToggle />}
 
       {/* Staff Profile Card with Avatar */}
       {isStaff && (

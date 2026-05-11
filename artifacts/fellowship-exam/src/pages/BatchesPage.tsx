@@ -50,6 +50,8 @@ export default function BatchesPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedCandidates, setSelectedCandidates] = useState<number[]>([]);
   const [viewingBatchId, setViewingBatchId] = useState<number | null>(null);
+  const [marksDialogOpen, setMarksDialogOpen] = useState(false);
+  const [marksUpdates, setMarksUpdates] = useState<Record<number, { mcq?: string; psych?: string; interview?: string }>>({});
 
   // Queries
   const { data: batches = [], isLoading: isLoadingBatches } = useQuery({
@@ -65,6 +67,12 @@ export default function BatchesPage() {
   const { data: programs = [] } = useQuery({
     queryKey: ["programs"],
     queryFn: () => api.get<any[]>("/programs"),
+  });
+
+  const { data: batchCandidates = [] } = useQuery({
+    queryKey: ["batch-candidates", viewingBatchId],
+    queryFn: () => api.get<any[]>(`/batches/${viewingBatchId}/candidates`),
+    enabled: !!viewingBatchId,
   });
 
   // Approved candidates not in a batch (simplified for now)
@@ -100,13 +108,26 @@ export default function BatchesPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const updateMarksMutation = useMutation({
+    mutationFn: (data: { batchId: number; updates: any[] }) => 
+      api.patch(`/batches/${data.batchId}/marks`, { updates: data.updates }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["batches"] });
+      queryClient.invalidateQueries({ queryKey: ["batch-candidates", viewingBatchId] });
+      setMarksDialogOpen(false);
+      toast({ title: "Marks updated successfully" });
+    },
+  });
+
   const handleCreateBatch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const data = {
       name: formData.get("name"),
+      segment: formData.get("segment"),
       date: formData.get("date"),
       timing: formData.get("timing"),
+      venue: formData.get("venue"),
       programId: parseInt(formData.get("programId") as string),
       mcqTotalMarks: parseFloat(formData.get("mcqTotal") as string),
       psychometricTotalMarks: parseFloat(formData.get("psychTotal") as string),
@@ -146,8 +167,15 @@ export default function BatchesPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="name" className="text-right">Batch Name</Label>
                   <Input id="name" name="name" placeholder="July 2026 - Group A" className="col-span-3" required />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="segment" className="text-right">Segment</Label>
+                  <select name="segment" className="col-span-3 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm" required>
+                    <option value="Retina">Retina</option>
+                    <option value="Anterior Segment">Anterior Segment</option>
+                    <option value="General">General</option>
+                  </select>
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="date" className="text-right">Exam Date</Label>
@@ -156,6 +184,10 @@ export default function BatchesPage() {
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="timing" className="text-right">Timing</Label>
                   <Input id="timing" name="timing" placeholder="09:00 AM - 01:00 PM" className="col-span-3" required />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="venue" className="text-right">Venue</Label>
+                  <Input id="venue" name="venue" defaultValue="SEH, Bangalore" className="col-span-3" required />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="programId" className="text-right">Program</Label>
@@ -207,8 +239,8 @@ export default function BatchesPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Batch Name</TableHead>
-                    <TableHead>Date / Time</TableHead>
+                    <TableHead>Batch Name / Segment</TableHead>
+                    <TableHead>Date / Venue</TableHead>
                     <TableHead className="text-center">Candidates</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -225,14 +257,14 @@ export default function BatchesPage() {
                       <TableRow key={batch.id} className="group cursor-pointer hover:bg-muted/50" onClick={() => setViewingBatchId(batch.id)}>
                         <TableCell>
                           <div className="font-medium">{batch.name}</div>
-                          <div className="text-xs text-muted-foreground">ID: #{batch.id}</div>
+                          <Badge variant="outline" className="text-[10px] mt-1">{batch.segment || "General"}</Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5 text-sm">
                             <Calendar className="h-3.5 w-3.5" /> {new Date(batch.date).toLocaleDateString()}
                           </div>
                           <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
-                            <Clock className="h-3.5 w-3.5" /> {batch.timing}
+                            <Building2 className="h-3.5 w-3.5" /> {batch.venue || "SEH, Bangalore"}
                           </div>
                         </TableCell>
                         <TableCell className="text-center">
@@ -242,6 +274,19 @@ export default function BatchesPage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="text-blue-600 hover:bg-blue-50"
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setViewingBatchId(batch.id);
+                                setMarksDialogOpen(true);
+                              }}
+                              title="Enter Offline Marks"
+                            >
+                              <Trophy className="h-4 w-4" />
+                            </Button>
                             <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); setViewingBatchId(batch.id); }}>
                               <ArrowRight className="h-4 w-4" />
                             </Button>
@@ -331,6 +376,101 @@ export default function BatchesPage() {
           </Card>
         </div>
       </div>
+      {/* Offline Marks Entry Dialog */}
+      <Dialog open={marksDialogOpen} onOpenChange={setMarksDialogOpen}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trophy className="h-5 w-5 text-blue-600" />
+              Enter Offline Marks
+            </DialogTitle>
+            <DialogDescription>
+              Enter evaluation marks for candidates in this batch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Candidate</TableHead>
+                  <TableHead className="w-24">MCQ</TableHead>
+                  <TableHead className="w-24">Psych</TableHead>
+                  <TableHead className="w-24">Interview</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {batchCandidates.length === 0 ? (
+                  <TableRow><TableCell colSpan={4} className="text-center py-4">No candidates in batch</TableCell></TableRow>
+                ) : (
+                  batchCandidates.map((bc: any) => (
+                    <TableRow key={bc.candidateId}>
+                      <TableCell>
+                        <div className="font-medium text-sm">{bc.candidateName}</div>
+                        <div className="text-[10px] text-muted-foreground">{bc.candidateCode}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number" 
+                          className="h-8 text-xs" 
+                          defaultValue={bc.mcqScore ?? ""}
+                          onChange={(e) => setMarksUpdates(prev => ({
+                            ...prev,
+                            [bc.candidateId]: { ...prev[bc.candidateId], mcq: e.target.value }
+                          }))}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number" 
+                          className="h-8 text-xs" 
+                          defaultValue={bc.psychometricScore ?? ""}
+                          onChange={(e) => setMarksUpdates(prev => ({
+                            ...prev,
+                            [bc.candidateId]: { ...prev[bc.candidateId], psych: e.target.value }
+                          }))}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number" 
+                          className="h-8 text-xs" 
+                          defaultValue={bc.interviewScore ?? ""}
+                          onChange={(e) => setMarksUpdates(prev => ({
+                            ...prev,
+                            [bc.candidateId]: { ...prev[bc.candidateId], interview: e.target.value }
+                          }))}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMarksDialogOpen(false)}>Cancel</Button>
+            <Button 
+              disabled={updateMarksMutation.isPending || batchCandidates.length === 0}
+              onClick={() => {
+                const updates = Object.entries(marksUpdates).map(([cid, vals]) => ({
+                  candidateId: parseInt(cid),
+                  mcqScore: vals.mcq ? parseFloat(vals.mcq) : undefined,
+                  psychometricScore: vals.psych ? parseFloat(vals.psych) : undefined,
+                  interviewScore: vals.interview ? parseFloat(vals.interview) : undefined,
+                }));
+                if (updates.length > 0) {
+                  updateMarksMutation.mutate({ batchId: viewingBatchId!, updates });
+                } else {
+                  setMarksDialogOpen(false);
+                }
+              }}
+            >
+              {updateMarksMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save All Marks
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

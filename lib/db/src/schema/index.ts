@@ -14,3 +14,4 @@ export * from "./payment-settings";
 export * from "./panels";
 export * from "./email-settings";
 export * from "./document-templates";
+export * from "./global-settings";

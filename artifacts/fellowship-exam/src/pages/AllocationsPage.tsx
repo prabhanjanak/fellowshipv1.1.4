@@ -37,6 +37,7 @@ import {
   X,
   Tag,
   ChevronDown,
+  Printer,
 } from "lucide-react";
 import {
   Dialog,
@@ -323,12 +324,19 @@ export default function AllocationsPage() {
                           <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1"><Building2 className="h-3 w-3" /> {c.unitName}</span>
                         </div>
                       ) : (
-                        <div className="flex gap-1.5 flex-wrap">
-                          {c.preferences.slice(0, 2).map((p: string, i: number) => (
-                            <Badge key={i} variant="outline" className="text-[9px] font-black uppercase tracking-tighter cursor-pointer hover:bg-primary hover:text-white transition-colors" onClick={() => allocationMutation.mutate({ id: c.id, specialization: p })}>
-                              {p}
-                            </Badge>
-                          ))}
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex gap-1.5 flex-wrap">
+                            {c.preferences.slice(0, 2).map((p: string, i: number) => (
+                              <Badge key={i} variant="outline" className="text-[9px] font-black uppercase tracking-tighter cursor-pointer hover:bg-primary hover:text-white transition-colors" onClick={() => allocationMutation.mutate({ id: c.id, specialization: p })}>
+                                {p}
+                              </Badge>
+                            ))}
+                          </div>
+                          {c.centerPreference && (
+                            <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                              <Building2 className="h-3 w-3 text-emerald-500" /> Pref: {c.centerPreference}
+                            </span>
+                          )}
                         </div>
                       )}
                     </TableCell>
@@ -338,6 +346,11 @@ export default function AllocationsPage() {
                            <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200" onClick={() => setPreviewCandidate({ ...c, allocatedSpec })} title="Preview">
                              <FileText className="h-4 w-4 text-slate-400" />
                            </Button>
+                           {c.submissionId && (
+                             <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200 text-blue-600" onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")} title="Print Application Form">
+                               <Printer className="h-4 w-4" />
+                             </Button>
+                           )}
                            <Button 
                             size="sm" 
                             variant="default" 

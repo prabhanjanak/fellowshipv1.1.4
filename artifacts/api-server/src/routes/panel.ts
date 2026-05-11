@@ -8,10 +8,11 @@ const router: Router = Router();
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-async function getPanels() {
+async function getPanels(isMockMode: boolean = false) {
   const panels = (await db.execute(sql`
     SELECT ip.id, ip.name, ip.room_number, ip.program_id, ip.is_active, ip.created_at
     FROM interview_panels ip
+    WHERE ip.is_mock = ${isMockMode}
     ORDER BY ip.room_number
   `)).rows as Array<Record<string, unknown>>;
 
@@ -56,8 +57,8 @@ async function getPanelQueue(panelId: number) {
 router.get("/panels",
   requireAuth,
   requireRole("super_admin", "program_admin", "central_exam_coordinator", "doctor", "display_operator" as never),
-  async (_req, res) => {
-    res.json(await getPanels());
+  async (req: any, res) => {
+    res.json(await getPanels(req.isMockMode));
   }
 );
 
@@ -86,7 +87,7 @@ router.post("/panels",
         `);
       }
     }
-    res.status(201).json((await getPanels()).find((p) => p.id === panel!["id"]));
+    res.status(201).json((await getPanels((req as any).isMockMode)).find((p) => p.id === panel!["id"]));
   }
 );
 
@@ -103,7 +104,7 @@ router.patch("/panels/:id",
     if (parts.length) {
       await db.execute(sql.raw(`UPDATE interview_panels SET ${parts.join(", ")} WHERE id = ${id}`));
     }
-    res.json((await getPanels()).find((p) => p.id === id) ?? { error: "Not found" });
+    res.json((await getPanels((req as any).isMockMode)).find((p) => p.id === id) ?? { error: "Not found" });
   }
 );
 
@@ -260,49 +261,87 @@ router.delete("/panels/:id/queue/:candidateId",
 
 // ── Public Display Endpoint (display_operator or admin) ────────────────────────
 
-router.get("/display/live", async (_req, res) => {
-    const panels = (await db.execute(sql`
-      SELECT ip.id, ip.name, ip.room_number, ip.is_active
-      FROM interview_panels ip
-      WHERE ip.is_active = TRUE
-      ORDER BY ip.room_number
-    `)).rows as Array<Record<string, unknown>>;
+router.get("/display/live", async (req: any, res) => {
+    try {
+      // Use the middleware-populated isMockMode or fallback to setting
+      let isMock = req.isMockMode;
+      if (isMock === undefined) {
+        const [setting] = await db.select().from(globalSettingsTable).where(eq(globalSettingsTable.key, "mock_mode"));
+        isMock = setting?.value === "true";
+      }
 
-    const result = await Promise.all(panels.map(async (p) => {
-      const panelId = Number(p["id"]);
-
-      const inProgress = (await db.execute(sql`
-        SELECT pq.candidate_id, pq.called_at, c.candidate_code, c.full_name
-        FROM panel_queue pq
-        JOIN candidates c ON c.id = pq.candidate_id
-        WHERE pq.panel_id = ${panelId} AND pq.status = 'in_progress'
-        LIMIT 1
+      const panels = (await db.execute(sql`
+        SELECT ip.id, ip.name, ip.room_number, ip.is_active, ip.program_id
+        FROM interview_panels ip
+        WHERE ip.is_active = TRUE AND ip.is_mock = ${isMock}
+        ORDER BY ip.room_number
       `)).rows as Array<Record<string, unknown>>;
 
-      const nextUp = (await db.execute(sql`
-        SELECT pq.candidate_id, c.candidate_code, c.full_name, pq.queue_position
-        FROM panel_queue pq
-        JOIN candidates c ON c.id = pq.candidate_id
-        WHERE pq.panel_id = ${panelId} AND pq.status = 'waiting'
-        ORDER BY pq.queue_position ASC
-        LIMIT 3
-      `)).rows as Array<Record<string, unknown>>;
+      const result = await Promise.all(panels.map(async (p) => {
+        const panelId = Number(p["id"]);
+        const programId = p["program_id"] ? Number(p["program_id"]) : null;
 
-      const current = inProgress[0] ?? null;
-      return {
-        panelId,
-        panelName: p["name"],
-        roomNumber: p["room_number"],
-        isActive: p["is_active"],
-        current: current ? {
-          candidateCode: current["candidate_code"],
-          calledAt: current["called_at"],
-        } : null,
-        nextQueue: nextUp.map((n) => ({ candidateCode: n["candidate_code"] })),
-      };
-    }));
+        const inProgress = (await db.execute(sql`
+          SELECT pq.candidate_id, pq.called_at, c.candidate_code, c.full_name
+          FROM panel_queue pq
+          JOIN candidates c ON c.id = pq.candidate_id
+          WHERE pq.panel_id = ${panelId} AND pq.status = 'in_progress'
+          LIMIT 1
+        `)).rows as Array<Record<string, unknown>>;
 
-    res.json(result);
+        const nextUp = (await db.execute(sql`
+          SELECT pq.candidate_id, c.candidate_code, c.full_name, pq.queue_position
+          FROM panel_queue pq
+          JOIN candidates c ON c.id = pq.candidate_id
+          WHERE pq.panel_id = ${panelId} AND pq.status = 'waiting'
+          ORDER BY pq.queue_position ASC
+          LIMIT 3
+        `)).rows as Array<Record<string, unknown>>;
+
+        const members = (await db.execute(sql`
+          SELECT u.full_name as doctor_name
+          FROM interview_panel_members ipm
+          JOIN users u ON u.id = ipm.doctor_id
+          WHERE ipm.panel_id = ${panelId}
+          ORDER BY ipm.is_main DESC
+        `)).rows as Array<Record<string, unknown>>;
+
+        let batch = null;
+        if (programId) {
+          const batches = (await db.execute(sql`
+            SELECT name, segment, date, timing, venue
+            FROM batches
+            WHERE program_id = ${programId} AND is_mock = ${isMock}
+            LIMIT 1
+          `)).rows as Array<Record<string, unknown>>;
+          batch = batches[0] ?? null;
+        }
+
+        const current = inProgress[0] ?? null;
+        return {
+          panelId,
+          panelName: p["name"],
+          roomNumber: p["room_number"],
+          isActive: p["is_active"],
+          members: members.map(m => m.doctor_name),
+          batch: batch,
+          current: current ? {
+            candidateCode: current["candidate_code"],
+            fullName: current["full_name"],
+            calledAt: current["called_at"],
+          } : null,
+          nextQueue: nextUp.map((n) => ({ 
+            candidateCode: n["candidate_code"],
+            fullName: n["full_name"]
+          })),
+        };
+      }));
+
+      res.json(result);
+    } catch (error) {
+      logger.error({ error }, "Display live failed");
+      res.status(500).json({ error: (error as Error).message });
+    }
   }
 );
 

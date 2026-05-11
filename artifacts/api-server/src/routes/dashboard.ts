@@ -27,12 +27,12 @@ router.get("/dashboard/summary", requireAuth, async (req, res) => {
     effectiveUnitId = u?.unitId ?? null;
   }
 
-  let candidates = await db.select().from(candidatesTable);
+  let candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, (req as any).isMockMode));
   if (effectiveUnitId != null) {
     candidates = candidates.filter((c) => c.unitId === effectiveUnitId);
   }
 
-  const programs = await db.select().from(programsTable);
+  const programs = await db.select().from(programsTable).where(eq(programsTable.isMock, (req as any).isMockMode));
   const units = await db.select().from(unitsTable);
   const specs = await db.select().from(specialitiesTable);
   const totalSeats = specs.reduce((s, x) => s + x.seats, 0);
@@ -40,8 +40,8 @@ router.get("/dashboard/summary", requireAuth, async (req, res) => {
   const allocated = allocs.filter((a) => a.status === "SELECTED").length;
   const waitlisted = candidates.filter((c) => c.status === "waitlisted").length;
   const pending = candidates.filter((c) => c.status === "pending").length;
-  const attempts = await db.select().from(examAttemptsTable);
-  const activeExams = (await db.select().from(examsTable)).filter((e) => e.active).length;
+  const attempts = await db.select().from(examAttemptsTable); // Filtering by candidate will handle this
+  const activeExams = (await db.select().from(examsTable).where(eq(examsTable.isMock, (req as any).isMockMode))).filter((e) => e.active).length;
   const interviews = await db.select().from(interviewScoresTable);
 
   const statusBreakdown = new Map<string, number>();
@@ -63,13 +63,14 @@ router.get("/dashboard/summary", requireAuth, async (req, res) => {
   });
 });
 
-router.get("/dashboard/recent-activity", requireAuth, async (req, res) => {
-  const candidates = await db.select().from(candidatesTable).orderBy(desc(candidatesTable.createdAt)).limit(5);
+router.get("/dashboard/recent-activity", requireAuth, async (req: any, res) => {
+  const isMock = req.isMockMode;
+  const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock)).orderBy(desc(candidatesTable.createdAt)).limit(5);
   const attempts = await db.select().from(examAttemptsTable).orderBy(desc(examAttemptsTable.startedAt)).limit(5);
-  const exams = await db.select().from(examsTable);
+  const exams = await db.select().from(examsTable).where(eq(examsTable.isMock, isMock));
   const interviews = await db.select().from(interviewScoresTable).orderBy(desc(interviewScoresTable.submittedAt)).limit(5);
   const users = await db.select().from(usersTable);
-  const allCandidates = await db.select().from(candidatesTable);
+  const allCandidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
 
   type Item = { id: string; kind: string; title: string; subtitle: string | null; at: string };
   const items: Item[] = [];

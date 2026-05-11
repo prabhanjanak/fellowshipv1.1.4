@@ -11,16 +11,6 @@ export const documentsTable = pgTable("documents", {
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const documentTemplatesTable = pgTable("document_templates", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  type: text("type").notNull(), // 'offer_letter', 'allocation_letter', etc.
-  content: text("content").notNull(), // HTML content with placeholders
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
 export const insertDocumentSchema = createInsertSchema(documentsTable).omit({ id: true, uploadedAt: true });
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 export type Document = typeof documentsTable.$inferSelect;
-export type DocumentTemplate = typeof documentTemplatesTable.$inferSelect;

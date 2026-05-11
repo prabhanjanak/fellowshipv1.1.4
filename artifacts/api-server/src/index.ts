@@ -22,6 +22,15 @@ if (Number.isNaN(port) || port <= 0) {
 const SARAVANAN_PASSWORD_HASH = "$2b$10$tzKB/Dj.bn.MPCUj5GJQz.V6.ijFrypzqkwSjMW458ni7dCAx0MuS";
 
 async function runStartupFixes() {
+  // Migration: global_settings table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS global_settings (
+      id SERIAL PRIMARY KEY,
+      key TEXT NOT NULL UNIQUE,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
   // Migration: add new columns if they don't exist
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS designation TEXT`);
@@ -137,6 +146,62 @@ async function runStartupFixes() {
       UNIQUE(panel_id, candidate_id)
     )
   `);
+
+  // Migration: doctor_panel_status table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS doctor_panel_status (
+      id SERIAL PRIMARY KEY,
+      doctor_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+      is_engaged BOOLEAN NOT NULL DEFAULT FALSE,
+      engaged_since TIMESTAMPTZ,
+      current_candidate_id INTEGER REFERENCES candidates(id),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  // Migration: batches and batch_candidates (Non-destructive update)
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS batches (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      segment TEXT,
+      date TIMESTAMPTZ NOT NULL,
+      timing TEXT NOT NULL,
+      venue TEXT NOT NULL DEFAULT 'SEH, Bangalore',
+      program_id INTEGER NOT NULL REFERENCES programs(id),
+      mcq_total_marks REAL NOT NULL DEFAULT 50,
+      psychometric_total_marks REAL NOT NULL DEFAULT 50,
+      interview_total_marks REAL NOT NULL DEFAULT 100,
+      is_mock BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS batch_candidates (
+      id SERIAL PRIMARY KEY,
+      batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+      candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+      mcq_score REAL,
+      psychometric_score REAL,
+      interview_score REAL,
+      status TEXT NOT NULL DEFAULT 'assigned',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(batch_id, candidate_id)
+    )
+  `);
+
+  // Ensure is_mock column exists for batches (if table already existed)
+  await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+
+  // Virtual Mock Mode support columns
+  await db.execute(sql`ALTER TABLE programs ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE candidates ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE interview_panels ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE exams ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE application_submissions ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE units ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
 
   // Fix 1: correct old placeholder email → canonical super admin email + password
   const [oldEmail] = await db.select().from(usersTable).where(eq(usersTable.email, "admin@sankaraeye.com"));

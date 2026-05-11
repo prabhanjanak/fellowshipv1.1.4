@@ -9,24 +9,27 @@ export const examsTable = pgTable("exams", {
   programId: integer("program_id"),
   durationMinutes: integer("duration_minutes").notNull().default(60),
   totalQuestions: integer("total_questions").notNull().default(20),
-  totalMarks: real("total_marks").notNull().default(100),
   passingScore: real("passing_score"),
   description: text("description"),
   active: boolean("active").notNull().default(true),
   startsAt: timestamp("starts_at", { withTimezone: true }),
   endsAt: timestamp("ends_at", { withTimezone: true }),
+  isMock: boolean("is_mock").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const batchesTable = pgTable("batches", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
-  date: timestamp("date", { withTimezone: true }).notNull(),
+  segment: text("segment"), // 'Retina', 'Anterior Segment', etc.
+  date: timestamp("date", { withTimezone: true }).notNull(), // Interview Date
   timing: text("timing").notNull(),
+  venue: text("venue").notNull().default("SEH, Bangalore"),
   programId: integer("program_id").notNull(),
   mcqTotalMarks: real("mcq_total_marks").notNull().default(50),
   psychometricTotalMarks: real("psychometric_total_marks").notNull().default(50),
   interviewTotalMarks: real("interview_total_marks").notNull().default(100),
+  isMock: boolean("is_mock").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

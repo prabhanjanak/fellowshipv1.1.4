@@ -188,25 +188,33 @@ export default function SeatMatrixPage() {
         <p className="text-muted-foreground text-sm mt-0.5">View and manage fellowship seat allocations per program</p>
       </div>
 
-      {/* Program Tabs */}
-      {programs.length > 1 && (
-        <div className="flex gap-1.5 flex-wrap border-b pb-3">
-          {programs.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => { setSelectedProgramId(p.id); setEditingCell(null); }}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                selectedProgramId === p.id
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              {p.name}
-              <span className="ml-1.5 text-xs opacity-70">{p.academicYear}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Program Selector Card */}
+      <Card className="bg-slate-900 text-white border-none shadow-lg">
+        <CardContent className="p-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-1">
+              <h2 className="text-lg font-black uppercase tracking-widest text-slate-400">Program Context</h2>
+              <p className="text-sm font-medium text-slate-300">Select a fellowship program to manage its seat matrix</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {programs.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { setSelectedProgramId(p.id); setEditingCell(null); }}
+                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all duration-300 border-2 ${
+                    selectedProgramId === p.id
+                      ? "bg-primary border-primary text-white shadow-[0_0_15px_rgba(234,88,12,0.4)]"
+                      : "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                  }`}
+                >
+                  {p.name}
+                  <span className="block text-[8px] opacity-60 mt-0.5">{p.academicYear}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {programs.length === 0 && (
         <Card className="border-dashed">

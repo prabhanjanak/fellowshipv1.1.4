@@ -11,7 +11,7 @@ import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Checkbox } from "../components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog";
-import { Search, UserPlus, Eye, FolderOpen, ExternalLink, Upload, Filter, ClipboardEdit, Trash2, Building2, CalendarDays, Info, ChevronDown, ChevronUp } from "lucide-react";
+import { Search, UserPlus, Eye, FolderOpen, ExternalLink, Upload, Filter, ClipboardEdit, Trash2, Building2, CalendarDays, Info, ChevronDown, ChevronUp, Download, Printer } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 
 interface CandidateDocument {
@@ -26,6 +26,8 @@ interface Candidate {
   specializations: string[]; documents: CandidateDocument[]; createdAt?: string;
   mcqScore?: number | null; psychometricScore?: number | null;
   paymentInfo?: { amount: number | null; id: string | null; mode: string | null } | null;
+  centerPreference?: string | null;
+  submissionId?: number | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -559,6 +561,17 @@ export default function CandidatesPage() {
                               <ClipboardEdit className="h-3.5 w-3.5" /> Marks
                             </Button>
                           )}
+                           {c.submissionId && (
+                             <Button
+                               variant="outline"
+                               size="sm"
+                               className="h-7 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                               onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                               title="Print Application Form"
+                             >
+                               <Printer className="h-3.5 w-3.5" /> Print
+                             </Button>
+                           )}
                           {c.documents.length > 0 && (
                             <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDocsCandidate(c)}>
                               <FolderOpen className="h-3.5 w-3.5" /> Docs
@@ -776,6 +789,7 @@ export default function CandidatesPage() {
                 ["College", viewCandidate.collegeName ?? "—"],
                 ["Address", viewCandidate.address ?? "—"],
                 ["Status", viewCandidate.status.replace(/_/g, " ")],
+                ["Preferred Center", viewCandidate.centerPreference ?? "—"],
                 ["MCQ Score", viewCandidate.mcqScore != null ? String(viewCandidate.mcqScore) : "—"],
                 ["Psychometric Score", viewCandidate.psychometricScore != null ? String(viewCandidate.psychometricScore) : "—"],
               ].filter(([, v]) => v && v !== "—").map(([k, v]) => (

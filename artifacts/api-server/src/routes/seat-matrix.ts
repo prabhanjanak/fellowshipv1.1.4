@@ -153,10 +153,8 @@ router.post(
     let program;
     if (pidRaw) {
       [program] = await db.select().from(programsTable).where(eq(programsTable.id, Number(pidRaw)));
-    } else {
-      [program] = await db.select().from(programsTable).limit(1);
     }
-    if (!program) { res.status(500).json({ error: "No program found" }); return; }
+    if (!program) { res.status(400).json({ error: "Program ID is required for import" }); return; }
 
     const existingSpecs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, program.id));
     const specMap = new Map(existingSpecs.map((s) => [s.name.toLowerCase(), s]));
@@ -207,8 +205,8 @@ router.patch(
     const seats = Number(totalSeats);
     let progId = pidRaw ? Number(pidRaw) : null;
     if (!progId) {
-      const [p] = await db.select().from(programsTable).limit(1);
-      progId = p?.id ?? null;
+      res.status(400).json({ error: "Program ID is required" });
+      return;
     }
 
     await db.execute(sql`
@@ -233,8 +231,8 @@ router.post(
     const d = (delta ?? 1) > 0 ? 1 : -1;
     let progId = pidRaw ? Number(pidRaw) : null;
     if (!progId) {
-      const [p] = await db.select().from(programsTable).limit(1);
-      progId = p?.id ?? null;
+      res.status(400).json({ error: "Program ID is required" });
+      return;
     }
     await db.execute(sql`
       INSERT INTO seat_matrix_entries (program_id, speciality, unit_name, total_seats, allocated_seats)
@@ -388,10 +386,8 @@ router.post(
     let program;
     if (pidRaw) {
       [program] = await db.select().from(programsTable).where(eq(programsTable.id, Number(pidRaw)));
-    } else {
-      [program] = await db.select().from(programsTable).limit(1);
     }
-    if (!program) { res.status(400).json({ error: "No program found. Please create a program first." }); return; }
+    if (!program) { res.status(400).json({ error: "Program ID is required for seeding." }); return; }
     const progId = program.id;
 
     // Clean up garbage entries for this program

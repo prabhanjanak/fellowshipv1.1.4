@@ -27,7 +27,6 @@ export const applicationFormsTable = pgTable("application_forms", {
 
 export const applicationSubmissionsTable = pgTable("application_submissions", {
   id: serial("id").primaryKey(),
-  candidateId: integer("candidate_id"),
   applicationId: uuid("application_id").defaultRandom().unique(),
   formId: integer("form_id").notNull(),
   saveAsDraft: boolean("save_as_draft").notNull().default(false),
@@ -88,10 +87,6 @@ export const applicationSubmissionsTable = pgTable("application_submissions", {
   paymentUrl: text("payment_url"),
   photoUrl: text("photo_url"),
   
-  paidAmount: integer("paid_amount"),
-  paymentId: text("payment_id"),
-  paymentMode: text("payment_mode"),
-
   customAnswers: jsonb("custom_answers").$type<Record<string, string>>().default({}),
 
   source: text("source").notNull().default("internal"),
@@ -100,6 +95,7 @@ export const applicationSubmissionsTable = pgTable("application_submissions", {
   googleSheetsRowId: text("google_sheets_row_id"),
 
   reviewNotes: text("review_notes"),
+  isMock: boolean("is_mock").notNull().default(false),
   submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
 });

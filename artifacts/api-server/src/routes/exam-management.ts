@@ -6,18 +6,13 @@ import { requireAuth, requireRole } from "../lib/auth";
 const router = Router();
 
 // Batches
-router.get("/batches", requireAuth, async (req, res) => {
+router.get("/batches", requireAuth, async (req: any, res) => {
   try {
-    const batches = await db.select().from(batchesTable);
-    
-    // Enrich with candidate count
+    const batches = await db.select().from(batchesTable).where(eq(batchesTable.isMock, req.isMockMode));
     const enriched = await Promise.all(batches.map(async (b) => {
-      const result = await db.execute(sql`
-        SELECT COUNT(*) as count FROM batch_candidates WHERE batch_id = ${b.id}
-      `);
+      const result = await db.execute(sql`SELECT COUNT(*) as count FROM batch_candidates WHERE batch_id = ${b.id}`);
       return { ...b, candidateCount: Number((result.rows[0] as any).count) };
     }));
-    
     res.json(enriched);
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -29,8 +24,51 @@ router.post("/batches", requireAuth, requireRole("super_admin", "program_admin",
     const [batch] = await db.insert(batchesTable).values({
       ...req.body,
       date: new Date(req.body.date),
+      venue: req.body.venue || "SEH, Bangalore",
     }).returning();
     res.json(batch);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+router.get("/batches/:id/candidates", requireAuth, async (req, res) => {
+  try {
+    const batchId = Number(req.params.id);
+    const rows = await db.select().from(batchCandidatesTable).where(eq(batchCandidatesTable.batchId, batchId));
+    const candIds = rows.map(r => r.candidateId);
+    if (candIds.length === 0) { res.json([]); return; }
+    
+    const candidates = await db.select().from(candidatesTable);
+    res.json(rows.map(r => {
+      const c = candidates.find(x => x.id === r.candidateId);
+      return {
+        ...r,
+        candidateName: c?.fullName ?? "Unknown",
+        candidateCode: c?.candidateCode ?? "N/A"
+      };
+    }));
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+router.patch("/batches/:id/marks", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const batchId = Number(req.params.id);
+    const { updates } = req.body as { updates: { candidateId: number; mcqScore?: number; psychometricScore?: number; interviewScore?: number }[] };
+    
+    for (const u of updates) {
+      await db.update(batchCandidatesTable)
+        .set({
+          mcqScore: u.mcqScore,
+          psychometricScore: u.psychometricScore,
+          interviewScore: u.interviewScore,
+          status: "completed"
+        })
+        .where(and(eq(batchCandidatesTable.batchId, batchId), eq(batchCandidatesTable.candidateId, u.candidateId)));
+    }
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }

@@ -1,63 +1,67 @@
-import React, { useRef } from 'react';
-import { StyleSheet, StatusBar, BackHandler, ActivityIndicator, View, Platform } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import React from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
+import LoginScreen from './src/screens/LoginScreen';
+import DashboardScreen from './src/screens/DashboardScreen';
+import CandidateSearchScreen from './src/screens/CandidateSearchScreen';
+import { ActivityIndicator, View } from 'react-native';
+import { Theme } from './src/theme';
 
-export default function App() {
-  const webViewRef = useRef(null);
+const Stack = createStackNavigator();
 
-  // Handle hardware back button on Android
-  React.useEffect(() => {
-    const onBackPress = () => {
-      if (webViewRef.current) {
-        webViewRef.current.goBack();
-        return true; // prevent default behavior (exit app)
-      }
-      return false;
-    };
+function Navigation() {
+  const { user, loading } = useAuth();
 
-    BackHandler.addEventListener('hardwareBackPress', onBackPress);
-    return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
-  }, []);
+  if (loading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <ActivityIndicator size="large" color={Theme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
-        <WebView
-          ref={webViewRef}
-          source={{ uri: 'https://learn.sankaraeye.in' }}
-          style={styles.webview}
-          startInLoadingState={true}
-          renderLoading={() => (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#0000ff" />
-            </View>
-          )}
-          allowsInlineMediaPlayback={true}
-          mediaPlaybackRequiresUserAction={false}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
-        />
-      </SafeAreaView>
-    </SafeAreaProvider>
+    <NavigationContainer>
+      <Stack.Navigator 
+        screenOptions={{ 
+          headerStyle: { backgroundColor: Theme.colors.background },
+          headerTitleStyle: { ...Theme.typography.h3 },
+          headerTintColor: Theme.colors.text,
+          headerBackTitleVisible: false,
+        }}
+      >
+        {!user ? (
+          <Stack.Screen 
+            name="Login" 
+            component={LoginScreen} 
+            options={{ headerShown: false }}
+          />
+        ) : (
+          <>
+            <Stack.Screen 
+              name="Dashboard" 
+              component={DashboardScreen} 
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen 
+              name="CandidateSearch" 
+              component={CandidateSearchScreen} 
+              options={{ title: 'Find Candidates' }}
+            />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    // Extra safeguard for Android to ensure UI doesn't cross the battery bar
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-  },
-  webview: {
-    flex: 1,
-  },
-  loadingContainer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-  }
-});
+export default function App() {
+  return (
+    <AuthProvider>
+      <StatusBar style="dark" />
+      <Navigation />
+    </AuthProvider>
+  );
+}

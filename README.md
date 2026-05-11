@@ -23,11 +23,6 @@ The environment variables must be created securely on your server. **Do not over
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/fellowship_db
 PORT=3002
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM=your-email@gmail.com
 ```
 
 **`artifacts/fellowship-exam/.env`:**
@@ -97,6 +92,13 @@ pm2 restart all
 # If database was corrupted (rare):
 psql -U postgres -d fellowship_db -f fellowship_db_backup_pre_update.sql
 ```
+
+## 📧 Email & SMTP Settings
+The application features a built-in UI for managing email credentials.
+- Log in to the application as a `super_admin` or `program_admin`.
+- Navigate to **Email Settings** from the sidebar.
+- Enter your SMTP details (Host, Port, User, App Password, etc.).
+- Save and test the connection right from the dashboard! No need to reboot the server or modify `.env` files.
 
 ## 📺 Waiting Hall TV Display Security
 The live interview queue can be accessed at the `/tv` route.

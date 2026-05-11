@@ -17,6 +17,7 @@ import {
   doctorAssignmentsTable,
   candidateExamAssignmentsTable,
   applicationSubmissionsTable,
+  programsTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { sendOfferLetterEmail, sendOfferLetterWithAttachment } from "../lib/email";
@@ -416,27 +417,43 @@ router.post("/candidates/:id/send-offer", requireAuth, requireRole("super_admin"
   try {
     const [settings] = await db.select().from(emailSettingsTable).limit(1);
     
-    if (settings && settings.googleDocsTemplateId && settings.googleServiceAccountJson) {
-      // Use Google Docs Template
-      const pdfBuffer = await processGoogleDocTemplate({
-        templateId: settings.googleDocsTemplateId,
-        serviceAccountJson: settings.googleServiceAccountJson,
-        replacements: {
-          letter_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
-          name: c.fullName,
-          address: c.address || "",
-          interview_date: req.body.interview_date || "—",
-          specialization: specialization,
-          unit: unitName,
-          duration: req.body.duration || "24 Months",
-          start_date: req.body.start_date || "—",
-          reporting_date: req.body.reporting_date || "—",
-          induction_dates: req.body.induction_dates || "—",
-          stipend: req.body.stipend || "0",
-          stipend_words: req.body.stipend_words || "Zero",
-          reporting_doctor: req.body.reporting_doctor || "the Chief Medical Officer",
-          signing_authority: req.body.signing_authority || "Director"
+    // Check for program-specific template
+    let templateId = settings?.googleDocsTemplateId;
+    const [submission] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
+    if (submission?.formId) {
+      const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, submission.formId));
+      if (form?.programId) {
+        const [prog] = await db.select().from(programsTable).where(eq(programsTable.id, form.programId));
+        if (prog?.offerLetterTemplateId) {
+          templateId = prog.offerLetterTemplateId;
         }
+      }
+    }
+
+    if (templateId && settings?.googleServiceAccountJson) {
+      // Build replacements from standard fields + body details + dynamic custom fields
+      const replacements: Record<string, string> = {
+        letter_date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }),
+        name: c.fullName,
+        address: c.address || "",
+        interview_date: req.body.interview_date || "—",
+        specialization: specialization,
+        unit: unitName,
+        duration: req.body.duration || "24 Months",
+        start_date: req.body.start_date || "—",
+        reporting_date: req.body.reporting_date || "—",
+        induction_dates: req.body.induction_dates || "—",
+        stipend: String(req.body.stipend || "0"),
+        stipend_words: req.body.stipend_words || "Zero",
+        reporting_doctor: req.body.reporting_doctor || "the Chief Medical Officer",
+        signing_authority: req.body.signing_authority || "Director",
+        ...(req.body.custom_fields || {}) // Merge dynamic fields from UI
+      };
+
+      const pdfBuffer = await processGoogleDocTemplate({
+        templateId,
+        serviceAccountJson: settings.googleServiceAccountJson,
+        replacements
       });
 
       await sendOfferLetterWithAttachment({

@@ -8,6 +8,7 @@ export const programsTable = pgTable("programs", {
   code: text("code").notNull().unique(),
   description: text("description"),
   academicYear: text("academic_year").notNull(),
+  offerLetterTemplateId: text("offer_letter_template_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

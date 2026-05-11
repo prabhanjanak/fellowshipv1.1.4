@@ -1,26 +1,9 @@
 import { google } from "googleapis";
 
-export type GoogleDocsReplacements = {
-  letter_date: string;
-  name: string;
-  address: string;
-  interview_date: string;
-  specialization: string;
-  unit: string;
-  duration: string;
-  start_date: string;
-  reporting_date: string;
-  induction_dates: string;
-  stipend: string;
-  stipend_words: string;
-  reporting_doctor: string;
-  signing_authority: string;
-};
-
 export async function processGoogleDocTemplate(opts: {
   templateId: string;
   serviceAccountJson: string;
-  replacements: GoogleDocsReplacements;
+  replacements: Record<string, string>;
 }) {
   const credentials = JSON.parse(opts.serviceAccountJson);
   const auth = new google.auth.GoogleAuth({
@@ -38,7 +21,7 @@ export async function processGoogleDocTemplate(opts: {
   const copyResp = await drive.files.copy({
     fileId: opts.templateId,
     requestBody: {
-      name: `Offer Letter - ${opts.replacements.candidateName}`,
+      name: `Offer Letter - ${opts.replacements.name || "Candidate"}`,
     },
   });
 
@@ -46,21 +29,23 @@ export async function processGoogleDocTemplate(opts: {
   if (!documentId) throw new Error("Failed to copy template document");
 
   try {
-    // 2. Apply search and replace
+    // 2. Apply search and replace for all provided tags
     const requests = Object.entries(opts.replacements).map(([key, value]) => ({
       replaceAllText: {
         containsText: {
           text: `{{${key}}}`,
           matchCase: false,
         },
-        replaceText: value,
+        replaceText: String(value || ""),
       },
     }));
 
-    await docs.documents.batchUpdate({
-      documentId,
-      requestBody: { requests },
-    });
+    if (requests.length > 0) {
+      await docs.documents.batchUpdate({
+        documentId,
+        requestBody: { requests },
+      });
+    }
 
     // 3. Export as PDF
     const exportResp = await drive.files.export(

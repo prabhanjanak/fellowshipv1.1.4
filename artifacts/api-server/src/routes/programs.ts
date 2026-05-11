@@ -16,6 +16,7 @@ async function programSummary(p: { id: number; name: string; code: string; descr
     code: p.code,
     description: p.description,
     academicYear: p.academicYear,
+    offerLetterTemplateId: p.offerLetterTemplateId,
     totalSeats,
     specialityCount: specs.length,
     candidateCount: candidates.length,
@@ -30,11 +31,12 @@ router.get("/programs", requireAuth, async (_req, res) => {
 });
 
 router.post("/programs", requireAuth, requireRole("super_admin", "program_admin"), async (req, res) => {
-  const { name, code, description, academicYear } = req.body as {
+  const { name, code, description, academicYear, offerLetterTemplateId } = req.body as {
     name: string;
     code: string;
     description?: string;
     academicYear: string;
+    offerLetterTemplateId?: string;
   };
   if (!name || !code || !academicYear) {
     res.status(400).json({ error: "Missing fields" });
@@ -45,6 +47,7 @@ router.post("/programs", requireAuth, requireRole("super_admin", "program_admin"
     code,
     description: description ?? null,
     academicYear,
+    offerLetterTemplateId: offerLetterTemplateId ?? null,
   }).returning();
   if (!p) { res.status(500).json({ error: "Failed" }); return; }
   res.json({
@@ -53,10 +56,19 @@ router.post("/programs", requireAuth, requireRole("super_admin", "program_admin"
     code: p.code,
     description: p.description,
     academicYear: p.academicYear,
+    offerLetterTemplateId: p.offerLetterTemplateId,
     totalSeats: 0,
     specialityCount: 0,
     candidateCount: 0,
   });
+});
+
+router.patch("/programs/:programId", requireAuth, requireRole("super_admin", "program_admin"), async (req, res) => {
+  const id = Number(req.params.programId);
+  const data = req.body;
+  const [updated] = await db.update(programsTable).set(data).where(eq(programsTable.id, id)).returning();
+  if (!updated) return res.status(404).json({ error: "Not found" });
+  res.json(await programSummary(updated));
 });
 
 router.get("/programs/:programId", requireAuth, async (req, res) => {
@@ -79,6 +91,7 @@ router.get("/programs/:programId", requireAuth, async (req, res) => {
     code: p.code,
     description: p.description,
     academicYear: p.academicYear,
+    offerLetterTemplateId: p.offerLetterTemplateId,
     totalSeats,
     specialityCount: specs.length,
     candidateCount: candidates.length,

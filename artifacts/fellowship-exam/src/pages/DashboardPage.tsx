@@ -5,8 +5,11 @@ import { useAuth } from "../contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Users, BookOpen, Award, ClipboardList, Clock, Building2, Database, Loader2 } from "lucide-react";
+import { Users, BookOpen, Award, ClipboardList, Clock, Building2, Database, Loader2, MonitorPlay, KeyRound, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
 
 interface DashboardStats {
   candidates: number;
@@ -61,6 +64,33 @@ export default function DashboardPage() {
     queryFn: () => api.get<DashboardStats>("/dashboard/summary"),
     retry: false,
   });
+
+  const [tvCodeOpen, setTvCodeOpen] = useState(false);
+  const [tvCode, setTvCode] = useState("");
+  const [generatingTv, setGeneratingTv] = useState(false);
+  const [showTvCode, setShowTvCode] = useState(false);
+
+  const loadTvCode = async () => {
+    try {
+      const res = await api.get<{code: string}>("/tv-access/code");
+      setTvCode(res.data.code);
+    } catch (e) {
+      console.error("Failed to load TV access code", e);
+    }
+  };
+
+  const generateTvCode = async () => {
+    setGeneratingTv(true);
+    try {
+      const res = await api.post<{code: string}>("/tv-access/code/generate", {});
+      setTvCode(res.data.code);
+      toast({ title: "New TV Access Code generated successfully" });
+    } catch (e) {
+      toast({ title: "Failed to generate code", variant: "destructive" });
+    } finally {
+      setGeneratingTv(false);
+    }
+  };
 
   const { data: candidates } = useQuery({
     queryKey: ["candidates"],
@@ -125,21 +155,37 @@ export default function DashboardPage() {
             {role === "unit_coordinator" ? `Unit Overview — ${user?.fullName}` : "Fellowship Exam Management Overview"}
           </p>
         </div>
-        {role === "super_admin" && (
-          <Button 
-            variant="outline" 
-            className="gap-2 border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 hover:text-orange-700"
-            onClick={() => {
-              if (confirm("This will WIPE all existing programs, candidates, and forms and replace them with dummy test data. Continue?")) {
-                seedMutation.mutate();
-              }
-            }}
-            disabled={seedMutation.isPending}
-          >
-            {seedMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-            Seed Test Data
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {(role === "super_admin" || role === "program_admin") && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => {
+                setTvCodeOpen(true);
+                setShowTvCode(false);
+                loadTvCode();
+              }}
+            >
+              <MonitorPlay className="h-4 w-4 text-emerald-600" />
+              TV Access Code
+            </Button>
+          )}
+          {role === "super_admin" && (
+            <Button 
+              variant="outline" 
+              className="gap-2 border-dashed border-orange-300 text-orange-600 hover:bg-orange-50 hover:text-orange-700"
+              onClick={() => {
+                if (confirm("This will WIPE all existing programs, candidates, and forms and replace them with dummy test data. Continue?")) {
+                  seedMutation.mutate();
+                }
+              }}
+              disabled={seedMutation.isPending}
+            >
+              {seedMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+              Seed Test Data
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -170,6 +216,48 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* TV Access Code Dialog */}
+      <Dialog open={tvCodeOpen} onOpenChange={setTvCodeOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-emerald-500" />
+              Waiting Hall TV Access
+            </DialogTitle>
+            <DialogDescription>
+              Use this secure code to authorize public screens accessing the TV portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center justify-center py-6 space-y-4">
+            <div className="relative">
+              <Input
+                readOnly
+                value={showTvCode ? tvCode : "••••••"}
+                className="w-48 h-16 text-center text-3xl font-black tracking-[0.25em] bg-slate-100 dark:bg-slate-900 border-2"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-3 h-10 w-10 text-muted-foreground hover:text-foreground"
+                onClick={() => setShowTvCode(!showTvCode)}
+              >
+                {showTvCode ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground text-center max-w-xs">
+              Anyone with this code can access the live interview dashboard until a new code is generated.
+            </p>
+          </div>
+          <DialogFooter className="sm:justify-between">
+            <Button variant="ghost" onClick={() => setTvCodeOpen(false)}>Close</Button>
+            <Button variant="default" onClick={generateTvCode} disabled={generatingTv} className="gap-2">
+              {generatingTv ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Generate New Code
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

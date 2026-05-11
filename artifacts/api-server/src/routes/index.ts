@@ -26,6 +26,7 @@ import storageRouter from "./storage";
 import paymentRouter from "./payment";
 import examManagementRouter from "./exam-management";
 import debugRouter from "./debug";
+import tvAccessRouter from "./tv-access";
 
 const router: IRouter = Router();
 
@@ -56,5 +57,6 @@ router.use(storageRouter);
 router.use(paymentRouter);
 router.use(examManagementRouter);
 router.use(debugRouter);
+router.use(tvAccessRouter);
 
 export default router;

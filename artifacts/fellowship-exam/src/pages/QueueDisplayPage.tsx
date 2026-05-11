@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import {
   Card,
   CardContent,
@@ -17,9 +18,38 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { Input } from "../components/ui/input";
+import { Button } from "../components/ui/button";
 
 export default function QueueDisplayPage() {
   const [time, setTime] = useState(new Date());
+  const [isVerified, setIsVerified] = useState(false);
+  const [accessCode, setAccessCode] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("tv_verified");
+    if (stored === "true") setIsVerified(true);
+  }, []);
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessCode) return;
+    setVerifying(true);
+    setError("");
+    try {
+      const res = await api.post("/tv-access/verify", { code: accessCode });
+      if (res.data?.success) {
+        setIsVerified(true);
+        sessionStorage.setItem("tv_verified", "true");
+      }
+    } catch (e: any) {
+      setError(e.response?.data?.error || "Invalid access code");
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -30,14 +60,52 @@ export default function QueueDisplayPage() {
     queryKey: ["display-live"],
     queryFn: () => api.get<any[]>("/display/live"),
     refetchInterval: 5000, // Refresh every 5 seconds for live feel
+    enabled: isVerified,
   });
 
   const { data: batches = [] } = useQuery({
     queryKey: ["batches"],
     queryFn: () => api.get<any[]>("/batches"),
+    enabled: isVerified,
   });
 
   const activeBatch = batches.find((b: any) => b.isActive) || { name: "FP-JUL-2026", academicYear: "2026-27" };
+
+  if (!isVerified) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-slate-950 to-slate-950" />
+        <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl relative z-10">
+          <CardHeader className="text-center space-y-4 pb-8">
+            <div className="mx-auto bg-white p-3 rounded-2xl w-24 h-24 flex items-center justify-center shadow-lg shadow-black/50">
+              <img src="/logo.png" alt="SAV Logo" className="w-16 object-contain" onError={(e) => e.currentTarget.style.display = 'none'} />
+            </div>
+            <CardTitle className="text-2xl font-black text-white tracking-tight">Waiting Hall Display</CardTitle>
+            <p className="text-sm text-slate-400 font-medium">Please enter the 6-character access code to authorize this display.</p>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleVerify} className="space-y-6">
+              <div className="space-y-2">
+                <Input
+                  autoFocus
+                  type="text"
+                  placeholder="e.g. A7K2P9"
+                  maxLength={6}
+                  value={accessCode}
+                  onChange={(e) => { setAccessCode(e.target.value.toUpperCase()); setError(""); }}
+                  className="bg-slate-950 border-slate-800 h-14 text-center text-3xl font-black tracking-[0.25em] text-white uppercase placeholder:text-slate-700 focus-visible:ring-primary/50"
+                />
+                {error && <p className="text-red-400 text-xs font-bold text-center mt-2">{error}</p>}
+              </div>
+              <Button type="submit" disabled={verifying || accessCode.length < 6} className="w-full h-12 text-base font-black tracking-widest uppercase">
+                {verifying ? <Loader2 className="h-5 w-5 animate-spin" /> : "Authorize Display"}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (isLoadingPanels) {
     return (

@@ -1,34 +1,59 @@
-# Fellowship Examination & Admission Portal (v1.0.1)
+# Sankara Academy of Vision: Fellowship Examination & Admission Portal (v1.0.1)
 
-A professional, end-to-end management system for Fellowship programs, specifically tailored for the **Sankara Academy of Vision**.
+A professional, end-to-end web platform designed to completely digitize and manage the lifecycle of Fellowship programs at the **Sankara Academy of Vision**.
 
-## 🚀 Newly Added Features & Modules (v1.0.1)
-- **Advanced Dynamic Form Builder:** Build application forms visually with Dropdowns, Checkboxes, Paragraphs, Radio buttons, and native options.
-- **Enhanced Application PDF Exports:** Administrative dashboard now supports exporting pixel-perfect Application PDFs seamlessly.
-- **Smart Auto-Allocate:** Automatic seat allocation logic based on merit, exam performance, and center preferences.
-- **Secure Waiting Hall TV Portal:** The `/tv` interview display board is now secured behind a 6-character access code which can be managed directly in the dashboard by super admins.
-- **Sankara Mobile App Shell:** Initial React Native (Expo) boilerplate wrapper generated in the repository for mobile portal testing.
-- **Integrated Email SMTP Templates:** Pre-configured environment placeholders to directly tie SMTP keys to node-mailer.
+---
 
-## 📦 Project Structure
+## 🌟 Complete Project Overview
+This platform consolidates all admission operations into a unified portal:
+- **Public Candidate Portal**: Allows candidates to sign up, securely pay the application fee via Razorpay, fill out comprehensive multi-step forms, and take proctored online entrance exams.
+- **Dynamic Form Builder**: A built-in drag-and-drop form engine (similar to Google Forms) supporting Checkboxes, Dropdowns, Radio buttons, File uploads, and custom data validations.
+- **Real-Time Interview Queue (TV Portal)**: A secure, live-updating digital display board (`/tv`) intended for waiting halls. It directs candidates to available interview panels dynamically. Protected by a 6-character admin-generated access code.
+- **Smart Seat Allocation**: An intelligent allocation algorithm that maps candidates to their preferred hospital units based on their final merit ranking and category.
+- **Automated Communication**: A built-in SMTP mailer that automatically fires personalized emails for registration, interview call letters, and final admission offers.
+- **Administrative PDF Exporting**: Advanced data-table exports allowing coordinators to download a pixel-perfect, printer-friendly PDF dossier of any candidate.
+
+## 🛠️ Technology Stack
+- **Frontend**: React (Vite), TailwindCSS, Lucide Icons, Recharts (for Analytics).
+- **Backend**: Node.js (Express), TypeScript.
+- **Database**: PostgreSQL structured with Drizzle ORM.
+- **State Management**: React Query (TanStack) & Context API.
+- **Mobile**: Expo React Native mobile shell (included in `/sankara-mobile-app`).
+
+---
+
+## 📦 Project Directory Structure
 - `/artifacts/fellowship-exam`: The main frontend React (Vite) application.
 - `/artifacts/api-server`: The backend Express API service.
 - `/lib/db`: Shared database schema and Drizzle configurations.
 - `/sankara-mobile-app`: Expo React Native mobile wrapper.
 
-## ⚙️ Environment Variables (.env)
-The environment variables must be created securely on your server. **Do not overwrite existing variables!**
+---
 
-**`artifacts/api-server/.env`:**
+## ⚙️ Environment Variables (.env)
+The environment variables must be created securely on your server. **Do not overwrite existing production variables!** Note: SMTP settings are *no longer* required in the `.env` as they are now configured directly from the admin dashboard.
+
+**Backend (`artifacts/api-server/.env`):**
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/fellowship_db
 PORT=3002
+# (SMTP settings have been migrated to the Admin UI)
 ```
 
-**`artifacts/fellowship-exam/.env`:**
+**Frontend (`artifacts/fellowship-exam/.env`):**
 ```env
 VITE_API_URL=https://your-server.com/api
 ```
+
+---
+
+## 🔧 Admin Post-Deployment Configuration
+After deploying, the Super Admin must log into the portal to configure the following dynamic settings:
+1. **Email/SMTP Configuration**: Navigate to **Email Settings** in the sidebar. Input the Gmail/SMTP credentials here to instantly activate system-wide automated emails.
+2. **TV Dashboard Security**: Navigate to the **Dashboard** and click **TV Access Code**. Use this code to authorize public waiting hall screens.
+3. **Razorpay Payments**: Configure the API Key and Secret directly in the **Payments** tab.
+
+---
 
 ## 🔄 Deployment & Update Process (In-Place Update)
 
@@ -81,8 +106,7 @@ pm2 restart fellowship-frontend
 ### Step 7: Verify Application Status
 1. Navigate to your live URL.
 2. Confirm the frontend loads correctly.
-3. Test a backend route (like `/api/health` or loading candidates).
-4. Verify the new UI changes (Form Builder, PDF exports, TV Access Code).
+3. Verify the new UI changes (Form Builder, PDF exports, TV Access Code).
 
 ### Step 8: Rollback Protocol (If Required)
 If an update causes issues, revert the codebase using Git and restore the database from the backup generated in Step 1.
@@ -92,15 +116,3 @@ pm2 restart all
 # If database was corrupted (rare):
 psql -U postgres -d fellowship_db -f fellowship_db_backup_pre_update.sql
 ```
-
-## 📧 Email & SMTP Settings
-The application features a built-in UI for managing email credentials.
-- Log in to the application as a `super_admin` or `program_admin`.
-- Navigate to **Email Settings** from the sidebar.
-- Enter your SMTP details (Host, Port, User, App Password, etc.).
-- Save and test the connection right from the dashboard! No need to reboot the server or modify `.env` files.
-
-## 📺 Waiting Hall TV Display Security
-The live interview queue can be accessed at the `/tv` route.
-- It requires an active **6-character Access Code**.
-- Generate and view this code inside the Admin Dashboard by clicking the "TV Access Code" button.

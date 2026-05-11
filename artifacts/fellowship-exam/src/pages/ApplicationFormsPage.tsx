@@ -23,10 +23,11 @@ import { useToast } from "../hooks/use-toast";
 interface CustomField {
   id: string;
   label: string;
-  type: "text" | "textarea" | "select" | "radio" | "checkbox";
+  type: "text" | "textarea" | "select" | "radio" | "checkbox" | "checkbox_group" | "date" | "time" | "file" | "number" | "email" | "phone" | "heading" | "static_text";
   options?: string[];
   required: boolean;
   placeholder?: string;
+  description?: string;
 }
 
 interface ApplicationForm {
@@ -129,10 +130,19 @@ function genId() {
 
 const FIELD_TYPE_LABELS: Record<CustomField["type"], string> = {
   text: "Short Text",
-  textarea: "Long Text",
-  select: "Dropdown (select one)",
-  radio: "Multiple Choice (radio)",
-  checkbox: "Checkbox (yes/no)",
+  textarea: "Paragraph",
+  email: "Email Address",
+  phone: "Mobile Number",
+  number: "Number",
+  date: "Date Picker",
+  time: "Time Picker",
+  radio: "Radio Button (Select One)",
+  checkbox_group: "Checkbox Group (Select Multiple)",
+  select: "Dropdown / Select",
+  file: "File Upload",
+  checkbox: "Single Checkbox (Yes/No)",
+  heading: "Section Heading",
+  static_text: "Static Text / Description",
 };
 
 function getStorageUrl(objectPath: string): string {
@@ -256,45 +266,81 @@ function CustomFieldEditor({
   field,
   onChange,
   onDelete,
+  onMoveUp,
+  onMoveDown,
+  isFirst,
+  isLast,
 }: {
   field: CustomField;
   onChange: (updated: CustomField) => void;
   onDelete: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  isFirst?: boolean;
+  isLast?: boolean;
 }) {
-  const [optionsText, setOptionsText] = useState((field.options ?? []).join("\n"));
-  const needsOptions = field.type === "select" || field.type === "radio";
+  const needsOptions = ["select", "radio", "checkbox_group"].includes(field.type);
+  const isDisplayOnly = ["heading", "static_text"].includes(field.type);
 
-  const updateOptions = (text: string) => {
-    setOptionsText(text);
-    const opts = text.split("\n").map((o) => o.trim()).filter(Boolean);
-    onChange({ ...field, options: opts });
+  const addOption = () => {
+    const newOptions = [...(field.options || []), `Option ${(field.options?.length || 0) + 1}`];
+    onChange({ ...field, options: newOptions });
+  };
+
+  const updateOption = (index: number, val: string) => {
+    const newOptions = [...(field.options || [])];
+    newOptions[index] = val;
+    onChange({ ...field, options: newOptions });
+  };
+
+  const removeOption = (index: number) => {
+    const newOptions = (field.options || []).filter((_, i) => i !== index);
+    onChange({ ...field, options: newOptions });
   };
 
   return (
-    <div className="border rounded-lg p-3 space-y-3 bg-muted/20">
-      <div className="flex items-start gap-2">
-        <GripVertical className="h-4 w-4 mt-2.5 text-muted-foreground shrink-0 cursor-grab" />
-        <div className="flex-1 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Field Label</Label>
+    <div className="border rounded-xl p-4 space-y-4 bg-white shadow-sm dark:bg-slate-950 transition-all">
+      <div className="flex items-start gap-3">
+        <div className="flex flex-col gap-1 mt-1 shrink-0">
+          {onMoveUp && (
+            <button onClick={onMoveUp} disabled={isFirst} className="text-muted-foreground hover:text-foreground disabled:opacity-30">
+              <ChevronUp className="h-4 w-4" />
+            </button>
+          )}
+          {onMoveDown && (
+            <button onClick={onMoveDown} disabled={isLast} className="text-muted-foreground hover:text-foreground disabled:opacity-30">
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        
+        <div className="flex-1 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="md:col-span-8 space-y-1.5">
               <Input
-                placeholder="e.g., Institution Type"
+                placeholder={isDisplayOnly ? "Enter Section Title or Text..." : "Question / Field Label"}
                 value={field.label}
                 onChange={(e) => onChange({ ...field, label: e.target.value })}
-                className="h-8 text-sm"
+                className="h-10 text-base font-medium bg-muted/50"
               />
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Input Type</Label>
+            <div className="md:col-span-4 space-y-1.5">
               <Select
                 value={field.type}
-                onValueChange={(v) => onChange({ ...field, type: v as CustomField["type"], options: [] })}
+                onValueChange={(v) => {
+                  const newType = v as CustomField["type"];
+                  const needsOpts = ["select", "radio", "checkbox_group"].includes(newType);
+                  onChange({ 
+                    ...field, 
+                    type: newType, 
+                    options: needsOpts && (!field.options || field.options.length === 0) ? ["Option 1"] : field.options 
+                  });
+                }}
               >
-                <SelectTrigger className="h-8 text-sm">
+                <SelectTrigger className="h-10 bg-muted/50">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   {(Object.entries(FIELD_TYPE_LABELS) as [CustomField["type"], string][]).map(([val, lbl]) => (
                     <SelectItem key={val} value={val}>{lbl}</SelectItem>
                   ))}
@@ -303,11 +349,21 @@ function CustomFieldEditor({
             </div>
           </div>
 
-          {!needsOptions && field.type !== "checkbox" && (
-            <div className="space-y-1">
-              <Label className="text-xs">Placeholder Text (optional)</Label>
+          {!isDisplayOnly && (
+            <div className="space-y-1.5">
               <Input
-                placeholder="e.g., Enter your answer"
+                placeholder="Help text or description (optional)"
+                value={field.description || ""}
+                onChange={(e) => onChange({ ...field, description: e.target.value })}
+                className="h-8 text-sm"
+              />
+            </div>
+          )}
+
+          {!needsOptions && !isDisplayOnly && field.type !== "checkbox" && field.type !== "file" && (
+            <div className="space-y-1.5">
+              <Input
+                placeholder="Placeholder Text (optional)"
                 value={field.placeholder ?? ""}
                 onChange={(e) => onChange({ ...field, placeholder: e.target.value })}
                 className="h-8 text-sm"
@@ -316,31 +372,71 @@ function CustomFieldEditor({
           )}
 
           {needsOptions && (
-            <div className="space-y-1">
-              <Label className="text-xs">Options (one per line)</Label>
-              <Textarea
-                placeholder={"Option A\nOption B\nOption C"}
-                value={optionsText}
-                onChange={(e) => updateOptions(e.target.value)}
-                rows={3}
-                className="text-sm"
-              />
-              <p className="text-xs text-muted-foreground">Enter each option on a new line</p>
+            <div className="space-y-2 mt-2 pl-2 border-l-2 border-muted">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Options</Label>
+              {(field.options || []).map((opt, idx) => (
+                <div key={idx} className="flex items-center gap-2 group">
+                  {field.type === 'radio' ? (
+                    <div className="h-4 w-4 rounded-full border shrink-0 bg-muted/30" />
+                  ) : field.type === 'checkbox_group' ? (
+                    <div className="h-4 w-4 rounded-sm border shrink-0 bg-muted/30" />
+                  ) : (
+                    <span className="text-xs text-muted-foreground w-4 text-center">{idx + 1}.</span>
+                  )}
+                  <Input
+                    value={opt}
+                    onChange={(e) => updateOption(idx, e.target.value)}
+                    className="h-8 text-sm focus-visible:ring-1"
+                    placeholder={`Option ${idx + 1}`}
+                  />
+                  <button 
+                    onClick={() => removeOption(idx)} 
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 transition-opacity"
+                    title="Remove option"
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2 pt-1">
+                {field.type === 'radio' ? (
+                  <div className="h-4 w-4 rounded-full border shrink-0 bg-muted/10" />
+                ) : field.type === 'checkbox_group' ? (
+                  <div className="h-4 w-4 rounded-sm border shrink-0 bg-muted/10" />
+                ) : (
+                  <span className="text-xs text-muted-foreground w-4 text-center">{((field.options?.length) || 0) + 1}.</span>
+                )}
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  className="h-8 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 justify-start px-2"
+                  onClick={addOption}
+                >
+                  <Plus className="h-3 w-3 mr-1" /> Add Option
+                </Button>
+              </div>
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id={`req-${field.id}`}
-              checked={field.required}
-              onCheckedChange={(v) => onChange({ ...field, required: !!v })}
-            />
-            <Label htmlFor={`req-${field.id}`} className="text-xs cursor-pointer">Required field</Label>
+          <Separator className="my-2" />
+          
+          <div className="flex items-center justify-between">
+            {!isDisplayOnly ? (
+              <div className="flex items-center gap-2">
+                <Switch
+                  id={`req-${field.id}`}
+                  checked={field.required}
+                  onCheckedChange={(v) => onChange({ ...field, required: !!v })}
+                />
+                <Label htmlFor={`req-${field.id}`} className="text-sm cursor-pointer font-medium">Required field</Label>
+              </div>
+            ) : <div />}
+            
+            <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5">
+              <Trash2 className="h-4 w-4" /> Delete Field
+            </Button>
           </div>
         </div>
-        <button onClick={onDelete} className="text-destructive/60 hover:text-destructive mt-0.5 shrink-0">
-          <XIcon className="h-4 w-4" />
-        </button>
       </div>
     </div>
   );
@@ -404,7 +500,7 @@ export default function ApplicationFormsPage() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [createFormData, setCreateFormData] = useState({ programId: "", title: "", description: "", deadline: "", loadDefaults: true });
+  const [createFormData, setCreateFormData] = useState({ programId: "", title: "", description: "", deadline: "", loadDefaults: true, customToken: "" });
   const [createCustomFields, setCreateCustomFields] = useState<CustomField[]>([]);
   const [editCustomFields, setEditCustomFields] = useState<CustomField[]>([]);
   const [editSectionsConfig, setEditSectionsConfig] = useState<any[]>([]);
@@ -453,12 +549,12 @@ export default function ApplicationFormsPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: { programId: number; title: string; description?: string; deadline?: string; customFields: CustomField[]; loadDefaults?: boolean }) =>
+    mutationFn: (data: { programId: number; title: string; description?: string; deadline?: string; customFields: CustomField[]; loadDefaults?: boolean; customToken?: string }) =>
       api.post<ApplicationForm>("/application-forms", data),
     onSuccess: (form) => {
       qc.invalidateQueries({ queryKey: ["application-forms"] });
       setCreateOpen(false);
-      setCreateFormData({ programId: "", title: "", description: "", deadline: "", loadDefaults: true });
+      setCreateFormData({ programId: "", title: "", description: "", deadline: "", loadDefaults: true, customToken: "" });
       setCreateCustomFields([]);
       setCreatedForm(form);
     },
@@ -1185,7 +1281,7 @@ export default function ApplicationFormsPage() {
       )}
 
       {/* Create Dialog */}
-      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setCreateCustomFields([]); setCreateFormData({ programId: "", title: "", description: "", deadline: "" }); } }}>
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setCreateCustomFields([]); setCreateFormData({ programId: "", title: "", description: "", deadline: "", customToken: "" }); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Create Application Form</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1214,6 +1310,15 @@ export default function ApplicationFormsPage() {
               <Label>Description (optional)</Label>
               <Textarea placeholder="Instructions or notes for candidates…"
                 value={createFormData.description} onChange={(e) => setCreateFormData((f) => ({ ...f, description: e.target.value }))} rows={2} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Custom Link Code (optional)</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground whitespace-nowrap bg-muted px-3 py-2 rounded-md border">{window.location.origin}/apply/</span>
+                <Input placeholder="e.g., JULY2026"
+                  value={createFormData.customToken} onChange={(e) => setCreateFormData((f) => ({ ...f, customToken: e.target.value.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase() }))} />
+              </div>
+              <p className="text-xs text-muted-foreground">Leave blank to auto-generate a random link.</p>
             </div>
 
             <Separator />
@@ -1267,10 +1372,22 @@ export default function ApplicationFormsPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {createCustomFields.map((cf) => (
+                  {createCustomFields.map((cf, idx) => (
                     <CustomFieldEditor
                       key={cf.id}
                       field={cf}
+                      isFirst={idx === 0}
+                      isLast={idx === createCustomFields.length - 1}
+                      onMoveUp={() => {
+                        const newFields = [...createCustomFields];
+                        [newFields[idx - 1], newFields[idx]] = [newFields[idx], newFields[idx - 1]];
+                        setCreateCustomFields(newFields);
+                      }}
+                      onMoveDown={() => {
+                        const newFields = [...createCustomFields];
+                        [newFields[idx + 1], newFields[idx]] = [newFields[idx], newFields[idx + 1]];
+                        setCreateCustomFields(newFields);
+                      }}
                       onChange={(updated) => updateCustomField(createCustomFields, setCreateCustomFields, cf.id, updated)}
                       onDelete={() => deleteCustomField(createCustomFields, setCreateCustomFields, cf.id)}
                     />
@@ -1287,6 +1404,7 @@ export default function ApplicationFormsPage() {
                 description: createFormData.description || undefined, deadline: createFormData.deadline || undefined,
                 customFields: createCustomFields,
                 loadDefaults: createFormData.loadDefaults,
+                customToken: createFormData.customToken || undefined,
               })}>
               {createMutation.isPending ? "Creating…" : "Create & Get Link"}
             </Button>
@@ -1602,10 +1720,22 @@ export default function ApplicationFormsPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {editCustomFields.map((cf) => (
+                    {editCustomFields.map((cf, idx) => (
                       <CustomFieldEditor
                         key={cf.id}
                         field={cf}
+                        isFirst={idx === 0}
+                        isLast={idx === editCustomFields.length - 1}
+                        onMoveUp={() => {
+                          const newFields = [...editCustomFields];
+                          [newFields[idx - 1], newFields[idx]] = [newFields[idx], newFields[idx - 1]];
+                          setEditCustomFields(newFields);
+                        }}
+                        onMoveDown={() => {
+                          const newFields = [...editCustomFields];
+                          [newFields[idx + 1], newFields[idx]] = [newFields[idx], newFields[idx + 1]];
+                          setEditCustomFields(newFields);
+                        }}
                         onChange={(updated) => updateCustomField(editCustomFields, setEditCustomFields, cf.id, updated)}
                         onDelete={() => deleteCustomField(editCustomFields, setEditCustomFields, cf.id)}
                       />

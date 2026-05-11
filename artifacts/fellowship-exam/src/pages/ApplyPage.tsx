@@ -682,14 +682,14 @@ export default function ApplyPage({ token }: { token: string }) {
 
                return (
                  <div key={field.id} className="space-y-3">
-                   {field.type !== 'info' && (
+                   {field.type !== 'info' && field.type !== 'heading' && field.type !== 'static_text' && (
                      <Label className="text-sm font-bold text-slate-700 flex items-center gap-1">
                        {field.label}
                        {field.required && <span className="text-orange-600">*</span>}
                      </Label>
                    )}
 
-                   {field.type === 'info' && (
+                  {field.type === 'info' && (
                       <div className="bg-orange-50 border-l-4 border-orange-500 p-6 rounded-r-xl shadow-sm">
                          <div className="flex items-start gap-4">
                            <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -705,6 +705,19 @@ export default function ApplyPage({ token }: { token: string }) {
                          </div>
                       </div>
                     )}
+
+                 {field.type === 'heading' && (
+                   <div className="pt-4 pb-2 border-b border-slate-200">
+                     <h3 className="text-xl font-bold text-slate-800">{field.label}</h3>
+                     {field.description && <p className="text-sm text-slate-500 mt-1">{field.description}</p>}
+                   </div>
+                 )}
+
+                 {field.type === 'static_text' && (
+                   <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">
+                     {field.label}
+                   </div>
+                 )}
 
                  {field.type === 'phone' && (
                    <div className="flex gap-2">
@@ -748,7 +761,17 @@ export default function ApplyPage({ token }: { token: string }) {
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
-                     placeholder={field.label}
+                     placeholder={field.placeholder || field.label}
+                   />
+                 )}
+
+                 {field.type === 'email' && (
+                   <input
+                     type="email"
+                     value={form[field.id] || ""}
+                     onChange={(e) => set(field.id, e.target.value)}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     placeholder={field.placeholder || "example@domain.com"}
                    />
                  )}
 
@@ -795,6 +818,15 @@ export default function ApplyPage({ token }: { token: string }) {
                  {field.type === 'date' && (
                    <input
                      type="date"
+                     value={form[field.id] || ""}
+                     onChange={(e) => set(field.id, e.target.value)}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                   />
+                 )}
+
+                 {field.type === 'time' && (
+                   <input
+                     type="time"
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
@@ -996,16 +1028,16 @@ export default function ApplyPage({ token }: { token: string }) {
                             <tr>
                               <td className="px-6 py-4 font-bold">SECTION TOTALS</td>
                               <td className="px-6 py-4 text-center font-bold text-orange-400 text-lg">
-                                {Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0), 0)}
+                                {Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0), 0))}
                               </td>
                               <td className="px-6 py-4 text-center font-bold text-green-400 text-lg">
-                                {Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.independent || 0), 0)}
+                                {Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.independent || 0), 0))}
                               </td>
                             </tr>
                             <tr className="bg-slate-800/50">
                               <td colSpan={3} className="px-6 py-3 text-right text-xs font-medium text-slate-400 italic uppercase tracking-widest">
                                 Combined Global Total: <span className="text-white font-bold ml-1">{
-                                  Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0) + (curr.independent || 0), 0)
+                                  Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0) + (curr.independent || 0), 0))
                                 }</span> Surgeries
                               </td>
                             </tr>

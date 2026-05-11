@@ -273,8 +273,16 @@ router.post(
     };
     if (!programId || !title) return res.status(400).json({ error: "programId and title required" });
 
-    const { customFields, loadDefaults } = req.body as { customFields?: unknown[]; loadDefaults?: boolean };
-    const token = generateToken();
+    const { customFields, loadDefaults, customToken } = req.body as { customFields?: unknown[]; loadDefaults?: boolean; customToken?: string };
+    
+    let token = generateToken();
+    if (customToken) {
+      const formattedToken = customToken.replace(/[^a-zA-Z0-9-]/g, '').toUpperCase();
+      const existing = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.token, formattedToken));
+      if (existing.length > 0) return res.status(400).json({ error: "Link code already in use" });
+      token = formattedToken;
+    }
+
     
     let finalSectionsConfig = sectionsConfig ?? [];
     if (loadDefaults && finalSectionsConfig.length === 0) {

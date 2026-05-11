@@ -39,13 +39,13 @@ export default function QueueDisplayPage() {
     setVerifying(true);
     setError("");
     try {
-      const res = await api.post("/tv-access/verify", { code: accessCode });
-      if (res.data?.success) {
+      const res = await api.post<{ success: boolean }>("/tv-access/verify", { code: accessCode });
+      if (res.success) {
         setIsVerified(true);
         sessionStorage.setItem("tv_verified", "true");
       }
     } catch (e: any) {
-      setError(e.response?.data?.error || "Invalid access code");
+      setError(e.message || "Invalid access code");
     } finally {
       setVerifying(false);
     }

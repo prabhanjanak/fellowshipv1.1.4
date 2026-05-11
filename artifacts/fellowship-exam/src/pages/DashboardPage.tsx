@@ -73,7 +73,7 @@ export default function DashboardPage() {
   const loadTvCode = async () => {
     try {
       const res = await api.get<{code: string}>("/tv-access/code");
-      setTvCode(res.data.code);
+      setTvCode(res.code);
     } catch (e) {
       console.error("Failed to load TV access code", e);
     }
@@ -83,7 +83,7 @@ export default function DashboardPage() {
     setGeneratingTv(true);
     try {
       const res = await api.post<{code: string}>("/tv-access/code/generate", {});
-      setTvCode(res.data.code);
+      setTvCode(res.code);
       toast({ title: "New TV Access Code generated successfully" });
     } catch (e) {
       toast({ title: "Failed to generate code", variant: "destructive" });

@@ -49,7 +49,7 @@ export default function EmailSettingsPage() {
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const data = Object.fromEntries(fd.entries());
+    const data: Record<string, any> = Object.fromEntries(fd.entries());
     // Convert switch values
     data.useSsl = fd.get("useSsl") === "on";
     data.enabled = fd.get("enabled") === "on";

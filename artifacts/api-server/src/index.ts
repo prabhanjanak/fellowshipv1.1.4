@@ -100,6 +100,9 @@ async function runStartupFixes() {
 
   // Migration: google_forms_response_id for deduplication
   await db.execute(sql`ALTER TABLE application_submissions ADD COLUMN IF NOT EXISTS google_forms_response_id TEXT`);
+  
+  // Migration: form_data JSONB on application_submissions
+  await db.execute(sql`ALTER TABLE application_submissions ADD COLUMN IF NOT EXISTS form_data JSONB DEFAULT '{}'::jsonb`);
 
   // Migration: google_sheets_config on application_forms
   await db.execute(sql`ALTER TABLE application_forms ADD COLUMN IF NOT EXISTS google_sheets_config JSONB DEFAULT NULL`);
@@ -228,7 +231,7 @@ async function runStartupFixes() {
       passwordHash: SARAVANAN_PASSWORD_HASH,
       role: "super_admin",
       fullName: "Saravanan",
-    });
+    } as any);
     logger.info("Created super admin saravanan@sankaraeye.com");
   }
 

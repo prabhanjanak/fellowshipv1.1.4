@@ -5,6 +5,7 @@ import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Label } from "../components/ui/label";
+import { motion, AnimatePresence } from "framer-motion";
 
 // Ensure Razorpay type exists
 declare global {
@@ -144,6 +145,20 @@ export default function ApplyPage({ token }: { token: string }) {
       .then((data) => {
         setFormInfo(data);
         if (data.sectionsConfig && data.sectionsConfig.length > 0) {
+           // Check for draft in localStorage
+           const savedDraft = localStorage.getItem(`fellowship_draft_${token}`);
+           if (savedDraft) {
+             try {
+               const { form: savedForm, step: savedStep } = JSON.parse(savedDraft);
+               console.log(`[AutoSave] Found draft for ${token}, restoring step ${savedStep}`);
+               setForm(savedForm);
+               setStep(savedStep);
+               return; // Exit early if draft loaded
+             } catch (e) {
+               console.error("[AutoSave] Failed to parse saved draft", e);
+             }
+           }
+
            const initial: Record<string, any> = { ...INITIAL_FORM };
            data.sectionsConfig.forEach((sec: any) => {
              sec.fields.forEach((f: any) => {
@@ -156,22 +171,40 @@ export default function ApplyPage({ token }: { token: string }) {
       .catch((e: Error) => setFormError(e.message))
       .finally(() => setLoading(false));
 
+    // Save draft periodically
+    const draftKey = `fellowship_draft_${token}`;
+    const interval = setInterval(() => {
+      // We'll use the latest state via functional update if needed, but here we can just watch form/step
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [token]);
+
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
+  
+  // Effect to save draft whenever form or step changes
+  useEffect(() => {
+    if (formInfo && !submitted) {
+      console.log(`[AutoSave] Saving draft for token: ${token}`);
+      setIsSaving(true);
+      localStorage.setItem(`fellowship_draft_${token}`, JSON.stringify({ form, step }));
+      const timer = setTimeout(() => {
+        setIsSaving(false);
+        setLastSaved(new Date().toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' }));
+        console.log(`[AutoSave] Draft saved at ${new Date().toLocaleTimeString()}`);
+      }, 800);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [form, step, token, formInfo, submitted]);
+
+  useEffect(() => {
     // Load payment config
     fetch(`${API}/apply/${token}/payment-config`)
       .then(r => r.json())
       .then(data => setPaymentConfig(data))
       .catch(e => console.error("Failed to load payment config", e));
-
-    // Load Razorpay script
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    document.body.appendChild(script);
-    return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
-    };
   }, [token]);
 
   const set = (field: string, value: unknown) => {
@@ -377,6 +410,8 @@ export default function ApplyPage({ token }: { token: string }) {
         const resData = await submitRes.json();
         setSubmissionId(resData.submissionId ? String(resData.submissionId) : null);
         setSubmitted(true);
+        // Clear draft on success
+        localStorage.removeItem(`fellowship_draft_${token}`);
         window.scrollTo(0, 0);
       } catch (e: any) {
         setConfirmError(e.message);
@@ -388,7 +423,6 @@ export default function ApplyPage({ token }: { token: string }) {
     return (
       <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-4">
         <div className="max-w-lg w-full space-y-6">
-          {/* Payment Verified Banner */}
           <div className="bg-green-50 border border-green-200 rounded-2xl p-6 text-center shadow-lg shadow-green-100">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="w-9 h-9 text-green-600" />
@@ -400,7 +434,6 @@ export default function ApplyPage({ token }: { token: string }) {
             </p>
           </div>
 
-          {/* Payment ID Box */}
           <div className="bg-white border-2 border-orange-200 rounded-2xl p-6 shadow-md">
             <div className="flex items-center gap-2 mb-3">
               <CreditCard className="w-5 h-5 text-orange-600" />
@@ -418,27 +451,21 @@ export default function ApplyPage({ token }: { token: string }) {
             </p>
           </div>
 
-          {/* Error if any */}
           {confirmError && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
               <strong>Error:</strong> {confirmError}
             </div>
           )}
 
-          {/* Final Submit Button */}
           <button
             onClick={handleFinalSubmit}
             disabled={confirming}
-            className="w-full py-4 rounded-2xl font-bold text-lg text-white transition-all duration-300 shadow-lg flex items-center justify-center gap-3 "
+            className="w-full py-4 rounded-2xl font-bold text-lg text-white transition-all duration-300 shadow-lg flex items-center justify-center gap-3"
             style={{ background: confirming ? '#16a34a99' : 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)', boxShadow: '0 8px 24px rgba(22,163,74,0.35)' }}
           >
-            {confirming ? (
-              <><Loader2 className="w-5 h-5 animate-spin" /> Submitting Application...</>
-            ) : (
-              <><CheckCircle2 className="w-5 h-5" /> Confirm & Submit Application</>
-            )}
+            {confirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+            {confirming ? 'Processing Submission...' : 'Confirm & Final Submit'}
           </button>
-          <p className="text-center text-xs text-slate-400">By clicking above, your application will be officially submitted to Sankara Academy of Vision.</p>
         </div>
       </div>
     );
@@ -446,159 +473,67 @@ export default function ApplyPage({ token }: { token: string }) {
 
   // ── Final Success / Printable Application Document ─────────────────────
   if (submitted) {
-    const allSections = formInfo.sectionsConfig || [];
-    const appForm = paymentVerified?.finalForm || form;
-
-    // Helper: render a field value as readable text
-    const renderValue = (field: any, value: any): string | null => {
-      if (value === null || value === undefined || value === "" || value === false) return null;
-      if (field.type === "file") return null; // skip file paths
-      if (field.type === "info") return null;
-      if (typeof value === "boolean") return value ? "Yes" : "No";
-      if (Array.isArray(value)) return value.length ? value.join(", ") : null;
-      if (typeof value === "object") {
-        // For surgery_table / qualification_matrix / skills_table
-        const lines = Object.entries(value).map(([k, v]: any) => {
-          if (typeof v === "object" && v !== null) {
-            return `${k}: Supervision=${v.supervision ?? 0}, Independent=${v.independent ?? 0}`;
-          }
-          return `${k}: ${v}`;
-        });
-        return lines.length ? lines.join("\n") : null;
-      }
-      return String(value);
-    };
-
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 p-4 md:p-8 print:bg-white print:p-0 relative overflow-hidden">
-        <style>{`@media print { .no-print { display: none !important; } body { background: white; } }`}</style>
-
-        {/* Particle Canvas Background */}
-        <ParticleCanvas className="no-print" />
-
-        <div className="max-w-4xl mx-auto relative z-10">
-          {/* Header */}
-          <div className="bg-white rounded-3xl shadow-2xl shadow-green-200/60 overflow-hidden print:shadow-none print:rounded-none">
-
-            {/* Title Bar */}
-            <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-8 py-8 text-white text-center print:bg-green-700">
-              <div className="flex justify-center mb-6 no-print">
-                <img src={logoUrl} alt="Sankara Logo" className="h-20 w-auto rounded-xl shadow-lg bg-white p-2" />
-              </div>
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 no-print">
-                <CheckCircle2 className="w-9 h-9" />
-              </div>
-              <h1 className="text-2xl font-bold mb-1">Fellowship Application — Submitted</h1>
-              <p className="text-green-100 text-sm">Sankara Academy of Vision · {formInfo.title}</p>
-              {submissionId && <p className="text-xs text-green-200 mt-1 font-mono">Application Ref: #{submissionId}</p>}
-              <p className="text-xs text-green-200 mt-1">Date: {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</p>
-            </div>
-
-            <div className="p-6 md:p-8 space-y-8">
-              {/* Payment Block */}
-              {paymentVerified && (
-                <div className="bg-green-50 border border-green-200 rounded-xl p-5">
-                  <h3 className="text-xs font-bold text-green-800 uppercase tracking-widest mb-3">✓ Payment Confirmed</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-slate-500 text-xs">Razorpay Payment ID</span>
-                      <p className="font-mono font-bold text-green-700 text-base">{paymentVerified.paymentId}</p>
-                    </div>
-                    <div>
-                      <span className="text-slate-500 text-xs">Amount Paid</span>
-                      <p className="font-bold text-green-700 text-base">
-                        {paymentConfig ? `${paymentConfig.currency} ${((paymentConfig.amount * (Array.isArray(appForm.specialization) ? appForm.specialization.length : 1)) / 100).toLocaleString("en-IN")}` : `Rs. ${(2750 * (Array.isArray(appForm.specialization) ? appForm.specialization.length : 1)).toLocaleString("en-IN")}`} /-
-                        {Array.isArray(appForm.specialization) && appForm.specialization.length > 1 && <span className="text-[10px] ml-1 opacity-70">(Rs. 2,750 x {appForm.specialization.length})</span>}
-                      </p>
-                    </div>
-                  </div>
+      <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }} 
+            animate={{ scale: 1, opacity: 1 }}
+            className="max-w-2xl w-full"
+          >
+            <Card className="border-none shadow-3xl overflow-hidden glass-card">
+              <div className="medical-gradient p-10 text-white text-center relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                   <div className="absolute -top-24 -left-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
+                   <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-400 rounded-full blur-3xl"></div>
                 </div>
-              )}
-
-              {/* All Sections */}
-              {allSections.map((section: any) => {
-                const visibleFields = section.fields.filter((f: any) =>
-                  f.type !== "info" && f.type !== "file" && appForm[f.id] !== undefined && appForm[f.id] !== "" && appForm[f.id] !== null
-                );
-                if (visibleFields.length === 0) return null;
-
-                return (
-                  <div key={section.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                    {/* Section Header */}
-                    <div className="bg-slate-800 px-5 py-3">
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">{section.title}</h3>
-                    </div>
-
-                    {/* Fields Grid */}
-                    <div className="divide-y divide-slate-50">
-                      {visibleFields.map((field: any) => {
-                        const raw = appForm[field.id];
-                        const rendered = renderValue(field, raw);
-                        if (!rendered) return null;
-                        const isMultiline = rendered.includes("\n");
-
-                        return (
-                          <div key={field.id} className={`px-5 py-3 ${isMultiline ? "" : "flex items-start gap-4"}`}>
-                            <span className={`text-xs text-slate-500 font-medium ${isMultiline ? "block mb-1" : "w-48 flex-shrink-0 pt-0.5"}`}>
-                              {field.label?.replace(" *", "")}
-                            </span>
-                            {isMultiline ? (
-                              <pre className="text-sm text-slate-800 font-sans whitespace-pre-wrap bg-slate-50 rounded-lg p-3 mt-1">
-                                {rendered}
-                              </pre>
-                            ) : (
-                              <span className="text-sm font-semibold text-slate-800 flex-1">{rendered}</span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                <div className="relative z-10">
+                  <div className="w-24 h-24 bg-white/20 backdrop-blur-xl rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl border border-white/30">
+                    <CheckCircle2 className="w-12 h-12 text-white" />
                   </div>
-                );
-              })}
-
-              {/* Next Steps */}
-              <div className="bg-blue-50 border border-blue-100 rounded-xl p-5">
-                <h3 className="text-xs font-bold text-blue-800 uppercase tracking-widest mb-3">What Happens Next?</h3>
-                <ol className="text-sm text-blue-700 space-y-1.5 list-decimal list-inside">
-                  <li>Your application will be reviewed by the Selection Committee.</li>
-                  <li>A written test (MCQ) and interview will be scheduled.</li>
-                  <li>Carry all original educational certificates, registration license, and a passport-size photograph.</li>
-                  <li>For queries, contact Sankara Academy of Vision, Coimbatore.</li>
-                </ol>
+                  <h2 className="text-3xl font-black mb-3 tracking-tight">Application Submitted!</h2>
+                  <p className="text-emerald-50/80 font-medium max-w-md mx-auto">Your application for the {formInfo.programName} has been received successfully.</p>
+                </div>
               </div>
+              <CardContent className="p-10 space-y-8 bg-white/50 backdrop-blur-sm">
+                <div className="grid grid-cols-2 gap-6">
+                   <div className="space-y-1">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Application Reference</p>
+                      <p className="text-lg font-mono font-bold text-slate-800">#{submissionId}</p>
+                   </div>
+                   <div className="space-y-1 text-right">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Submitted On</p>
+                      <p className="text-lg font-bold text-slate-800">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                   </div>
+                </div>
+                
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-6 space-y-4">
+                   <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Next Steps</h3>
+                   <div className="space-y-3">
+                      {[
+                        "Receive confirmation email shortly.",
+                        "Our team will review your credentials.",
+                        "Shortlisted candidates will be notified for interviews."
+                      ].map((step, idx) => (
+                        <div key={idx} className="flex items-center gap-3">
+                           <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-xs font-bold">{idx + 1}</div>
+                           <p className="text-sm text-slate-600 font-medium">{step}</p>
+                        </div>
+                      ))}
+                   </div>
+                </div>
 
-              {/* Actions */}
-              <div className="flex flex-col sm:flex-row gap-3 pt-2 no-print">
-                <button
-                  onClick={() => window.print()}
-                  className="flex-1 py-3 rounded-xl border-2 border-green-600 text-green-700 font-bold hover:bg-green-50 transition-all flex items-center justify-center gap-2"
+                <Button 
+                  className="w-full h-14 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-lg shadow-xl hover:shadow-2xl transition-all hover:-translate-y-0.5"
+                  onClick={() => window.location.href = "/"}
                 >
-                  🖨 Print / Save as PDF
-                </button>
-              </div>
-
-              <div className="text-center py-6 no-print">
-                <div className="inline-flex items-center gap-3 bg-slate-50 border border-slate-200 rounded-2xl px-8 py-4">
-                  <span className="text-2xl">✓</span>
-                  <div className="text-left">
-                    <p className="text-sm font-bold text-slate-700">Application complete</p>
-                    <p className="text-xs text-slate-500">You may close this window</p>
-                    <div className="mt-3 pt-3 border-t border-slate-200">
-                      <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
-                        If there are any issues, contact: <br />
-                        <a href="mailto:radhika@sankaraeye.com" className="text-blue-600 hover:underline">radhika@sankaraeye.com</a> & <a href="mailto:tejaswini@sankaraeye.com" className="text-blue-600 hover:underline">tejaswini@sankaraeye.com</a>
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+                  Return to Dashboard
+                </Button>
+              </CardContent>
+            </Card>
+          </motion.div>
         </div>
-      </div>
-    );
-  }
+      );
+   }
 
   const sections = formInfo.sectionsConfig || [];
   const currentSection = sections[step];
@@ -619,57 +554,67 @@ export default function ApplyPage({ token }: { token: string }) {
   const progress = ((step + 1) / sections.length) * 100;
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] pb-20 font-sans">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-50 backdrop-blur-sm bg-white/80">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between gap-4 mb-4">
+    <div className="min-h-screen bg-[#f1f5f9] pb-20 font-sans relative">
+      <ParticleCanvas className="opacity-40" />
+      
+      <div className="glass-header border-none shadow-sm bg-white/80 backdrop-blur-xl border-b border-white/50 sticky top-0 z-50">
+        <div className="max-w-4xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <img src={logoUrl} alt="Sankara Logo" className="h-12 w-auto rounded-lg shadow-sm bg-white p-1.5 shrink-0" />
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
+                 <img src={logoUrl} alt="Logo" className="h-8 w-8 object-contain invert" />
+              </div>
               <div>
-                <Badge variant="outline" className="mb-1 border-orange-200 text-orange-700 bg-orange-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider">
-                  {formInfo.programName}
-                </Badge>
-                <h1 className="text-xl md:text-2xl font-bold text-slate-900 mb-1">{formInfo.title}</h1>
+                <h1 className="text-lg font-black text-slate-900 leading-none">{formInfo.title}</h1>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Application Process</p>
               </div>
             </div>
-            <div className="hidden md:block text-right">
-              <div className="text-sm font-medium text-slate-500 mb-1">Step {step + 1} of {sections.length}</div>
-              <div className="text-xs font-bold text-orange-600">{Math.round(progress)}% Complete</div>
+            <div className="flex items-center gap-4">
+               <div className="text-right hidden sm:block">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Progress</p>
+                  <p className="text-sm font-bold text-slate-900">{step + 1} / {sections.length} Steps</p>
+               </div>
             </div>
           </div>
-          {formInfo.description && (
-            <p className="text-sm text-slate-600 whitespace-pre-wrap mb-4">{formInfo.description}</p>
-          )}
-          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-orange-600 transition-all duration-500 ease-out shadow-[0_0_10px_rgba(234,88,12,0.3)]" 
-              style={{ width: `${progress}%` }}
+          
+          <div className="mt-4 h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.5 }}
+              className="h-full bg-gradient-to-r from-orange-500 to-red-500" 
             />
           </div>
         </div>
       </div>
 
-      <main className="max-w-4xl mx-auto px-4 mt-8">
-        <Card className="border-slate-200/60 shadow-xl shadow-slate-200/50 overflow-hidden bg-white">
-          <div className="bg-slate-50/50 px-6 py-8 border-b border-slate-100">
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">{currentSection.title}</h2>
-            {currentSection.description && (
-              <div 
-                className="text-slate-600 leading-relaxed prose prose-sm max-w-none prose-slate"
-                dangerouslySetInnerHTML={{ __html: currentSection.description }}
-              />
-            )}
-          </div>
+      <main className="max-w-4xl mx-auto px-6 mt-10">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={step}
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -20, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+          >
+            <Card className="border-none shadow-2xl rounded-3xl overflow-hidden glass-card">
+              <div className="bg-white px-8 py-10 border-b border-slate-100">
+                <div className="flex items-center gap-3 mb-3">
+                   <h2 className="text-2xl font-black text-slate-900 tracking-tight">{currentSection.title}</h2>
+                </div>
+                {currentSection.description && (
+                  <div 
+                    className="text-slate-600 leading-relaxed prose prose-sm max-w-none prose-slate opacity-80"
+                    dangerouslySetInnerHTML={{ __html: currentSection.description }}
+                  />
+                )}
+              </div>
           
           <CardContent className="p-6 md:p-8 space-y-8">
              {currentSection.fields.map((field: any) => {
-               // Conditional visibility logic
                if (field.visibleIf) {
                  const targetValue = form[field.visibleIf.field];
                  const conditionValue = field.visibleIf.contains || field.visibleIf.equals;
-                 
-                 // Handle nested key checks (e.g., qualification_matrix.DNB)
                  if (field.visibleIf.key) {
                     const nestedVal = targetValue?.[field.visibleIf.key];
                     if (nestedVal !== conditionValue) return null;
@@ -724,7 +669,6 @@ export default function ApplyPage({ token }: { token: string }) {
                      <div className="relative group">
                        <div className="h-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center gap-3 cursor-pointer hover:border-orange-300 transition-all shadow-sm">
                          <div className="w-6 h-6 rounded-full overflow-hidden border border-slate-200 flex-shrink-0 shadow-sm relative">
-                           {/* Indian Flag SVG */}
                            <div className="absolute inset-0 flex flex-col">
                              <div className="flex-1 bg-[#FF9933]"></div>
                              <div className="flex-1 bg-white flex items-center justify-center">
@@ -1024,24 +968,6 @@ export default function ApplyPage({ token }: { token: string }) {
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot className="bg-slate-900 text-white border-t border-slate-800">
-                            <tr>
-                              <td className="px-6 py-4 font-bold">SECTION TOTALS</td>
-                              <td className="px-6 py-4 text-center font-bold text-orange-400 text-lg">
-                                {Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0), 0))}
-                              </td>
-                              <td className="px-6 py-4 text-center font-bold text-green-400 text-lg">
-                                {Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.independent || 0), 0))}
-                              </td>
-                            </tr>
-                            <tr className="bg-slate-800/50">
-                              <td colSpan={3} className="px-6 py-3 text-right text-xs font-medium text-slate-400 italic uppercase tracking-widest">
-                                Combined Global Total: <span className="text-white font-bold ml-1">{
-                                  Number(Object.values(form[field.id] || {}).reduce((acc: number, curr: any) => acc + (curr.supervision || 0) + (curr.independent || 0), 0))
-                                }</span> Surgeries
-                              </td>
-                            </tr>
-                          </tfoot>
                         </table>
                       </div>
                     </div>
@@ -1122,9 +1048,20 @@ export default function ApplyPage({ token }: { token: string }) {
               )}
             </Button>
           </div>
+          <div className="mt-4 p-4 bg-slate-50 border border-slate-100 rounded-xl">
+             <div className="flex items-start gap-3">
+               <AlertCircle className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+               <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                 Your progress is <strong>automatically saved</strong>. You can close this window and return later to continue where you left off. 
+                 <br />
+                 <span className="text-orange-600">Note: Applications cannot be modified after final submission.</span>
+               </p>
+             </div>
+          </div>
         </Card>
-      </main>
-    </div>
-  );
+      </motion.div>
+    </AnimatePresence>
+  </main>
+</div>
+);
 }
-

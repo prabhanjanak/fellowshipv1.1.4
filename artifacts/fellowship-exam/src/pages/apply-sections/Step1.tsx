@@ -40,7 +40,7 @@ export default function Step1({ form, set, err, formInfo }: any) {
       if (currentUnits.includes(unit)) {
         newUnits = currentUnits.filter((u: string) => u !== unit);
       } else {
-        newUnits = [...currentUnits.filter(u => u !== "Not Applicable"), unit];
+        newUnits = [...currentUnits.filter((u: string) => u !== "Not Applicable"), unit];
       }
     }
     set("centerPreference", { ...form.centerPreference, [spec]: newUnits });

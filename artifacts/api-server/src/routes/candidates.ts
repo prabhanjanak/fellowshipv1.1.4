@@ -394,7 +394,7 @@ router.delete("/candidates/:id", requireAuth, requireRole("super_admin", "progra
 });
 
 // POST bulk-delete candidates
-router.post("/candidates/bulk-delete", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+router.post("/candidates/bulk-delete", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"), async (req, res) => {
   const { ids } = req.body as { ids: number[] };
   if (!Array.isArray(ids) || ids.length === 0) { res.status(400).json({ error: "ids array required" }); return; }
   await cascadeDeleteCandidates(ids);

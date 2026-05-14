@@ -11,7 +11,12 @@ import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Checkbox } from "../components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog";
-import { Search, UserPlus, Eye, FolderOpen, ExternalLink, Upload, Filter, ClipboardEdit, Trash2, Building2, CalendarDays, Info, ChevronDown, ChevronUp, Download, Printer } from "lucide-react";
+import { 
+  Search, UserPlus, Eye, FolderOpen, ExternalLink, Upload, Filter, 
+  ClipboardEdit, Trash2, Building2, CalendarDays, Info, ChevronDown, 
+  ChevronUp, Download, Printer, Users, CheckCircle, Clock, Loader2 
+} from "lucide-react";
+import { motion } from "framer-motion";
 import { useToast } from "../hooks/use-toast";
 
 interface CandidateDocument {
@@ -40,13 +45,26 @@ const statusColors: Record<string, string> = {
 };
 
 const INTERVIEW_SCHEDULE = [
-  { displayDate: "01 June 2026", category: "Posterior Segment", specialities: ["Vitreo Retina", "Medical Retina"], venue: "Bengaluru" },
-  { displayDate: "08 June 2026", category: "Anterior Segment", specialities: ["IOL Fellowship", "Cornea", "Glaucoma", "Oculoplasty", "Pediatric Ophthalmology", "Phaco Refractive"], venue: "Bengaluru" },
+  { 
+    displayDate: "01 June 2026", 
+    category: "Posterior Segment (Retina)", 
+    specialities: ["Vitreo Retina", "Medical Retina", "Retina", "Uveitis", "Ocular Oncology"], 
+    venue: "Bengaluru" 
+  },
+  { 
+    displayDate: "08 June 2026", 
+    category: "Anterior Segment", 
+    specialities: ["IOL Fellowship", "Cornea", "Glaucoma", "Oculoplasty", "Pediatric Ophthalmology", "Phaco Refractive", "Comprehensive Ophthalmology", "General Ophthalmology"], 
+    venue: "Bengaluru" 
+  },
 ];
 
 function getInterviewInfo(specializations: string[]) {
   for (const spec of specializations) {
-    const slot = INTERVIEW_SCHEDULE.find((s) => s.specialities.includes(spec));
+    const sNormalized = spec.trim();
+    const slot = INTERVIEW_SCHEDULE.find((s) => 
+      s.specialities.some(sp => new RegExp(sp, "i").test(sNormalized))
+    );
     if (slot) return slot;
   }
   return null;
@@ -160,7 +178,9 @@ export default function CandidatesPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [specFilter, setSpecFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("date_desc");
   const [addOpen, setAddOpen] = useState(false);
   const [viewCandidate, setViewCandidate] = useState<Candidate | null>(null);
   const [docsCandidate, setDocsCandidate] = useState<Candidate | null>(null);
@@ -319,18 +339,40 @@ export default function CandidatesPage() {
   };
 
   const allSpecs = Array.from(new Set(candidates.flatMap((c) => c.specializations))).sort();
+  
   const filtered = candidates.filter((c) => {
     const matchSearch = c.fullName.toLowerCase().includes(search.toLowerCase()) ||
       c.candidateCode.toLowerCase().includes(search.toLowerCase()) ||
       c.email.toLowerCase().includes(search.toLowerCase());
     const matchSpec = specFilter === "all" || c.specializations.includes(specFilter);
     const matchStatus = statusFilter === "all" || c.status === statusFilter;
-    return matchSearch && matchSpec && matchStatus;
+    
+    let matchCategory = true;
+    if (categoryFilter !== "all") {
+      const interviewInfo = getInterviewInfo(c.specializations);
+      if (categoryFilter === "Anterior") {
+        matchCategory = interviewInfo?.category.includes("Anterior") ?? false;
+      } else if (categoryFilter === "Retina") {
+        matchCategory = interviewInfo?.category.includes("Retina") ?? false;
+      }
+    }
+
+    return matchSearch && matchSpec && matchStatus && matchCategory;
+  }).sort((a, b) => {
+    if (sortBy === "date_desc") {
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    } else if (sortBy === "date_asc") {
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+    } else if (sortBy === "name_asc") {
+      return a.fullName.localeCompare(b.fullName);
+    }
+    return 0;
   });
 
   const isSuperAdmin = user?.role === "super_admin";
   const isCEC = user?.role === "central_exam_coordinator";
-  const canManage = user?.role === "super_admin" || user?.role === "program_admin" || isCEC;
+  const isEC = user?.role === "exam_coordinator";
+  const canManage = isSuperAdmin || user?.role === "program_admin" || isCEC || isEC;
   const canEnterScores = canManage;
 
   const allFilteredIds = filtered.map((c) => c.id);
@@ -385,21 +427,34 @@ export default function CandidatesPage() {
   };
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+    <motion.div 
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      className="p-8 space-y-8"
+    >
+      <div className="flex items-center justify-between gap-6 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold">Candidates</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">{filtered.length} of {candidates.length} candidates</p>
+           <div className="flex items-center gap-2 mb-1">
+              <Badge className="bg-emerald-600 text-white border-none rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-widest">
+                 System Active
+              </Badge>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                 <Users className="w-3 h-3" /> Candidate Directory
+              </span>
+           </div>
+           <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Candidates Management</h1>
+           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-2">Showing {filtered.length} of {candidates.length} total profiles</p>
         </div>
-        <div className="flex gap-2 flex-wrap items-center">
+        
+        <div className="flex items-center gap-3">
           {canManage && selectedCount > 0 && (
-            <Button variant="destructive" className="gap-2" onClick={() => confirmDelete(allFilteredIds.filter((id) => selected.has(id)))}>
-              <Trash2 className="h-4 w-4" /> Delete {selectedCount} selected
+            <Button variant="destructive" size="sm" className="rounded-xl font-bold px-4 shadow-lg shadow-red-500/20" onClick={() => confirmDelete(allFilteredIds.filter((id) => selected.has(id)))}>
+              <Trash2 className="h-4 w-4 mr-2" /> Delete Selected ({selectedCount})
             </Button>
           )}
           {(isSuperAdmin || isCEC) && (
-            <Button variant="outline" className="gap-2" onClick={openImportDialog}>
-              <Upload className="h-4 w-4" /> Import from Excel
+            <Button variant="outline" size="sm" className="rounded-xl border-slate-200 font-bold px-4" onClick={openImportDialog}>
+              <Upload className="h-4 w-4 mr-2" /> Import Excel
             </Button>
           )}
           <input
@@ -410,144 +465,215 @@ export default function CandidatesPage() {
             onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); e.target.value = ""; }}
           />
           {canManage && (
-            <Button onClick={() => setAddOpen(true)} className="gap-2">
-              <UserPlus className="h-4 w-4" /> Add Candidate
+            <Button onClick={() => setAddOpen(true)} size="sm" className="rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold px-5 shadow-xl transition-all hover:-translate-y-0.5">
+              <UserPlus className="h-4 w-4 mr-2" /> Add Candidate
             </Button>
           )}
         </div>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search by name, code, or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+         {[
+           { label: "Active Candidates", value: candidates.length, sub: "In system", color: "blue", icon: <Users className="w-4 h-4" /> },
+           { label: "Approved", value: candidates.filter(c => c.status === 'approved').length, sub: "Ready for exam", color: "emerald", icon: <CheckCircle className="w-4 h-4" /> },
+           { label: "Waitlisted", value: candidates.filter(c => c.status === 'waitlisted').length, sub: "Backup pool", color: "orange", icon: <Clock className="w-4 h-4" /> },
+           { label: "Allocated", value: candidates.filter(c => c.status === 'allocated').length, sub: "Center assigned", color: "indigo", icon: <Building2 className="w-4 h-4" /> }
+         ].map((stat, idx) => (
+           <Card key={idx} className="border-none shadow-premium rounded-3xl p-6 bg-white overflow-hidden relative group">
+              <div className={`absolute top-0 right-0 w-24 h-24 bg-${stat.color}-500/5 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform`}></div>
+              <div className="flex items-center justify-between mb-2">
+                 <p className={`text-[10px] font-black text-${stat.color}-600 uppercase tracking-widest`}>{stat.label}</p>
+                 <div className={`p-2 rounded-xl bg-${stat.color}-50 text-${stat.color}-600`}>{stat.icon}</div>
+              </div>
+              <p className="text-3xl font-black text-slate-900">{stat.value}</p>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 opacity-70">{stat.sub}</p>
+           </Card>
+         ))}
+      </div>
+
+      <div className="bg-white p-2 rounded-[2rem] shadow-premium flex gap-2 flex-wrap border border-slate-100">
+        <div className="relative flex-1 min-w-[300px]">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input 
+            placeholder="Search candidates by name, code, or email…" 
+            value={search} 
+            onChange={(e) => setSearch(e.target.value)} 
+            className="pl-11 h-12 border-none bg-transparent focus-visible:ring-0 text-sm font-medium"
+          />
         </div>
+        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
         <Select value={specFilter} onValueChange={setSpecFilter}>
-          <SelectTrigger className="w-52">
-            <Filter className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
-            <SelectValue placeholder="All specializations" />
+          <SelectTrigger className="w-52 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
+            <Filter className="h-3.5 w-3.5 mr-2 text-slate-400" />
+            <SelectValue placeholder="All Specializations" />
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All specializations</SelectItem>
+          <SelectContent className="rounded-2xl">
+            <SelectItem value="all">All Specializations</SelectItem>
             {allSpecs.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
+        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className="w-48 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
+            <Building2 className="h-3.5 w-3.5 mr-2 text-slate-400" />
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent className="rounded-2xl">
+            <SelectItem value="all">All Categories</SelectItem>
+            <SelectItem value="Anterior">Anterior Segment</SelectItem>
+            <SelectItem value="Retina">Retina (Posterior)</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44"><SelectValue placeholder="All statuses" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
+          <SelectTrigger className="w-44 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent className="rounded-2xl">
+            <SelectItem value="all">All Statuses</SelectItem>
             {["pending", "approved", "rejected", "interview_completed", "waitlisted", "allocated"].map((s) => (
-              <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
+              <SelectItem key={s} value={s}>{s.replace(/_/g, " ").toUpperCase()}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-48 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
+            <CalendarDays className="h-3.5 w-3.5 mr-2 text-slate-400" />
+            <SelectValue placeholder="Sort By" />
+          </SelectTrigger>
+          <SelectContent className="rounded-2xl">
+            <SelectItem value="date_desc">Applied (Newest)</SelectItem>
+            <SelectItem value="date_asc">Applied (Oldest)</SelectItem>
+            <SelectItem value="name_asc">Name (A-Z)</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading candidates…</div>
+        <div className="text-center py-24">
+           <Loader2 className="w-10 h-10 animate-spin text-slate-300 mx-auto mb-4" />
+           <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Loading Candidate Directory…</p>
+        </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">No candidates found</div>
+        <div className="text-center py-24 bg-white rounded-3xl border border-slate-100 shadow-sm">
+           <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Search className="w-8 h-8 text-slate-300" />
+           </div>
+           <p className="text-slate-900 font-black text-xl tracking-tight">No Candidates Found</p>
+           <p className="text-slate-400 text-sm mt-1">Try adjusting your filters or search query.</p>
+        </div>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/40">
-                  <tr>
+        <Card className="border-none shadow-2xl rounded-3xl overflow-hidden bg-white">
+          <div className="overflow-x-auto fancy-scrollbar">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  {canManage && (
+                    <th className="px-6 py-5 w-10">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={toggleAll}
+                        className="rounded-md border-slate-300"
+                      />
+                    </th>
+                  )}
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Candidate</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Specialization</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Marks</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Payment</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
+                  <th className="text-right px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filtered.map((c) => (
+                  <tr key={c.id} className={`group hover:bg-slate-50/50 transition-colors ${selected.has(c.id) ? "bg-orange-50/30" : ""}`}>
                     {canManage && (
-                      <th className="px-4 py-3 w-10">
+                      <td className="px-6 py-5">
                         <Checkbox
-                          checked={allSelected}
-                          data-state={someSelected && !allSelected ? "indeterminate" : allSelected ? "checked" : "unchecked"}
-                          onCheckedChange={toggleAll}
-                          aria-label="Select all"
+                          checked={selected.has(c.id)}
+                          onCheckedChange={() => toggleOne(c.id)}
+                          className="rounded-md border-slate-300"
                         />
-                      </th>
+                      </td>
                     )}
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Code</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Email / Phone</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Specialization(s)</th>
-                    {canEnterScores && <th className="text-center px-3 py-3 font-medium text-muted-foreground">MCQ</th>}
-                    {canEnterScores && <th className="text-center px-3 py-3 font-medium text-muted-foreground">Psycho</th>}
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Payment</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((c) => (
-                    <tr key={c.id} className={`border-b last:border-0 hover:bg-muted/20 transition-colors ${selected.has(c.id) ? "bg-orange-50 dark:bg-orange-950/20" : ""}`}>
-                      {canManage && (
-                        <td className="px-4 py-3">
-                          <Checkbox
-                            checked={selected.has(c.id)}
-                            onCheckedChange={() => toggleOne(c.id)}
-                            aria-label={`Select ${c.fullName}`}
-                          />
-                        </td>
-                      )}
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{c.candidateCode}</td>
-                      <td className="px-4 py-3 font-medium max-w-36 truncate">{c.fullName}</td>
-                      <td className="px-4 py-3">
-                        <div className="text-xs text-muted-foreground">{c.email}</div>
-                        {c.phone && <div className="text-xs mt-0.5">{c.phone}</div>}
-                      </td>
-                      <td className="px-4 py-3 max-w-52">
-                        <div className="flex flex-wrap gap-1">
-                          {c.specializations.length === 0 ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : c.specializations.map((s) => (
-                            <span key={s} className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-medium ${SPEC_COLORS[s] ?? "bg-gray-100 text-gray-700"}`}>{s}</span>
-                          ))}
+                    <td className="px-6 py-5">
+                      <div className="flex flex-col">
+                        <span className="font-black text-slate-900 text-base leading-tight group-hover:text-emerald-600 transition-colors cursor-pointer flex items-center gap-2">
+                           {c.fullName}
+                           <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-tighter">
+                             {c.candidateCode}
+                           </span>
+                        </span>
+                        <div className="flex items-center gap-3 mt-1.5">
+                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                              <Search className="w-2.5 h-2.5" /> {c.email}
+                           </span>
+                           {c.createdAt && (
+                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 border-l pl-3 border-slate-100">
+                                <CalendarDays className="w-2.5 h-2.5" /> {new Date(c.createdAt).toLocaleDateString()}
+                             </span>
+                           )}
                         </div>
-                      </td>
-                      {canEnterScores && (
-                        <td className="px-3 py-3 text-center">
-                          {c.mcqScore != null
-                            ? <span className="font-semibold text-primary">{c.mcqScore}</span>
-                            : <span className="text-muted-foreground text-xs">—</span>}
-                        </td>
-                      )}
-                      {canEnterScores && (
-                        <td className="px-3 py-3 text-center">
-                          {c.psychometricScore != null
-                            ? <span className="font-semibold text-primary">{c.psychometricScore}</span>
-                            : <span className="text-muted-foreground text-xs">—</span>}
-                        </td>
-                      )}
-                      <td className="px-4 py-3">
-                        {c.paymentInfo ? (
-                          <div className="space-y-0.5">
-                            <div className="font-bold text-emerald-600">₹{c.paymentInfo.amount}</div>
-                            <div className="text-[10px] text-muted-foreground font-mono">{c.paymentInfo.id}</div>
-                            <div className="text-[9px] uppercase font-bold text-muted-foreground">{c.paymentInfo.mode}</div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 max-w-[200px]">
+                      <div className="flex flex-wrap gap-1.5">
+                        {c.specializations.length === 0 ? (
+                          <span className="text-[10px] font-bold text-slate-300 uppercase italic tracking-widest">No Selection</span>
+                        ) : c.specializations.map((s) => (
+                          <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
+                             {s}
+                          </Badge>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                       <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[10px] w-24">
+                             <span className="font-bold text-slate-400 uppercase tracking-widest">MCQ</span>
+                             <span className={`font-black ${c.mcqScore ? 'text-slate-900' : 'text-slate-300 italic'}`}>{c.mcqScore ?? 'N/A'}</span>
                           </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">No payment info</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
+                          <div className="flex items-center justify-between text-[10px] w-24">
+                             <span className="font-bold text-slate-400 uppercase tracking-widest">Psy</span>
+                             <span className={`font-black ${c.psychometricScore ? 'text-slate-900' : 'text-slate-300 italic'}`}>{c.psychometricScore ?? 'N/A'}</span>
+                          </div>
+                       </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      {c.paymentInfo ? (
+                        <div className="flex flex-col">
+                          <span className="text-sm font-black text-slate-900 leading-none">₹{c.paymentInfo.amount}</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{c.paymentInfo.mode}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest italic">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-5">
                         {canManage ? (
-                          <div className="space-y-1">
+                          <div className="flex flex-col gap-1.5">
                             <Select value={c.status} onValueChange={(v) => updateStatus.mutate({ id: c.id, status: v, candidate: c })}>
-                              <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
+                              <SelectTrigger className={`h-8 w-40 rounded-full text-[9px] font-black uppercase tracking-widest border-none shadow-sm transition-all ${statusColors[c.status] || "bg-slate-100 text-slate-600"}`}>
+                                 <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="rounded-2xl">
                                 {["pending", "approved", "rejected", "interview_completed", "waitlisted", "allocated"].map((s) => (
-                                  <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            {(c.status === "approved" || c.status === "interview_completed") && (() => {
-                              const info = getInterviewInfo(c.specializations);
-                              return info ? (
-                                <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400">
-                                  <CalendarDays className="h-2.5 w-2.5" />
-                                  <span>{info.displayDate}</span>
-                                </div>
-                              ) : null;
-                            })()}
-                          </div>
+                                    <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {(c.status === "approved" || c.status === "interview_completed") && (() => {
+                                const info = getInterviewInfo(c.specializations);
+                                return info ? (
+                                  <div className="flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 px-2">
+                                    <CalendarDays className="h-2.5 w-2.5" />
+                                    <span>{info.displayDate}</span>
+                                  </div>
+                                ) : null;
+                              })()}
+                            </div>
                         ) : (
                           <Badge className={statusColors[c.status] ?? ""} variant="secondary">
                             {c.status.replace(/_/g, " ")}
@@ -561,17 +687,17 @@ export default function CandidatesPage() {
                               <ClipboardEdit className="h-3.5 w-3.5" /> Marks
                             </Button>
                           )}
-                           {c.submissionId && (
-                             <Button
-                               variant="outline"
-                               size="sm"
-                               className="h-7 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
-                               onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
-                               title="Print Application Form"
-                             >
-                               <Printer className="h-3.5 w-3.5" /> Print
-                             </Button>
-                           )}
+                          {c.submissionId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 gap-1 text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                              onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                              title="Print Application Form"
+                            >
+                              <Printer className="h-3.5 w-3.5" /> Print
+                            </Button>
+                          )}
                           {c.documents.length > 0 && (
                             <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDocsCandidate(c)}>
                               <FolderOpen className="h-3.5 w-3.5" /> Docs
@@ -597,9 +723,8 @@ export default function CandidatesPage() {
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </Card>
+        )}
 
       {/* Score Entry Dialog */}
       <ScoreDialog candidate={scoreCandidate} open={!!scoreCandidate} onClose={() => setScoreCandidate(null)} />
@@ -905,7 +1030,7 @@ export default function CandidatesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </motion.div>
   );
 }
 

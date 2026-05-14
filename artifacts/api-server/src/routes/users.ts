@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { eq } from "drizzle-orm";
-import { db, usersTable, unitsTable, programsTable, doctorAssignmentsTable, interviewScoresTable } from "@workspace/db";
+import { db, usersTable, unitsTable, programsTable, doctorAssignmentsTable, interviewScoresTable, interviewPanelMembersTable } from "@workspace/db";
 import { hashPassword } from "../lib/auth";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -171,7 +171,8 @@ router.delete(
       return;
     }
 
-    // Cascade: remove all doctor assignments and interview scores for this user
+    // Cascade: remove all doctor assignments, interview scores, and panel memberships for this user
+    await db.delete(interviewPanelMembersTable).where(eq(interviewPanelMembersTable.doctorId, id));
     await db.delete(doctorAssignmentsTable).where(eq(doctorAssignmentsTable.doctorId, id));
     await db.delete(interviewScoresTable).where(eq(interviewScoresTable.doctorId, id));
 

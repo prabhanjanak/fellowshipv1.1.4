@@ -30,7 +30,7 @@ function checkCompleteness(sub: {
 router.get(
   "/application-forms/submissions/:id/pdf",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     try {
       const id = Number(req.params.id);
@@ -243,7 +243,7 @@ router.get(
 router.get(
   "/application-forms",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (_req, res) => {
     const forms = await db.select().from(applicationFormsTable).orderBy(desc(applicationFormsTable.createdAt));
     const programs = await db.select().from(programsTable);
@@ -266,7 +266,7 @@ router.get(
 router.post(
   "/application-forms",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const { programId, title, description, deadline, sectionsConfig } = req.body as {
       programId: number; title: string; description?: string; deadline?: string; sectionsConfig?: any[];
@@ -307,7 +307,7 @@ router.post(
 router.patch(
   "/application-forms/:id",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const { isActive, deadline, title, description, customFields, sectionsConfig } = req.body as {
@@ -335,7 +335,7 @@ router.patch(
 router.delete(
   "/application-forms/:id",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     await db.delete(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.formId, id));
@@ -347,7 +347,7 @@ router.delete(
 router.get(
   "/application-forms/:id/submissions",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req: any, res) => {
     const formId = Number(req.params.id);
     const subs = await db
@@ -362,7 +362,7 @@ router.get(
 router.get(
   "/application-forms/:id/export",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const formId = Number(req.params.id);
     const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, formId));
@@ -392,10 +392,7 @@ router.get(
         }
       }
 
-      let caParsed: Record<string, any> = {};
-      try {
-        caParsed = JSON.parse(s.customAnswers ?? "{}");
-      } catch {}
+      const caParsed = (s.customAnswers as Record<string, any>) || {};
 
       const baseRow: Record<string, any> = {
         "Submission ID": s.id,
@@ -502,13 +499,34 @@ router.get(
 router.patch(
   "/application-forms/submissions/:id",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
-    const { status, reviewNotes } = req.body as { status?: string; reviewNotes?: string };
-    const updates: Partial<typeof applicationSubmissionsTable.$inferInsert> = {};
-    if (status) updates.status = status;
-    if (reviewNotes !== undefined) updates.reviewNotes = reviewNotes;
+    const body = req.body;
+    
+    const updates: any = {};
+    const possibleFields = [
+      "status", "reviewNotes", "formData", "fullName", "email", "phone",
+      "permanentAddress", "mailingAddress", "dateOfBirth", "maritalStatus", "spouseDetails",
+      "degree", "medicalCollege", "university", "medicalCouncilNumber",
+      "diagnosticSkills", "surgicalExperience", "totalSurgeries",
+      "specialization", "centerPreference", "customAnswers", "readyForReview",
+      "gender", "pgQualifications", "doQualification", "doDetails", 
+      "msMdQualification", "msMdDetails", "dnbQualification", "dnbDetails",
+      "otherTraining", "publications", "presentations", "otherInformation"
+    ];
+
+    possibleFields.forEach(field => {
+      if (body[field] !== undefined) {
+        // Handle type conversions if necessary
+        if (field === "formData" || field === "customAnswers") {
+          updates[field] = body[field] as never;
+        } else {
+          updates[field] = body[field];
+        }
+      }
+    });
+    
     updates.reviewedAt = new Date();
 
     const [updated] = await db
@@ -524,7 +542,7 @@ router.patch(
 router.post(
   "/application-forms/submissions/:id/approve",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.id, id));
@@ -587,7 +605,7 @@ router.post(
 router.post(
   "/application-forms/:formId/submissions/bulk-action",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const formId = Number(req.params.formId);
     const { action, ids } = req.body as { action: "approve" | "reject"; ids: number[] };
@@ -681,7 +699,7 @@ router.post(
 router.get(
   "/application-forms/:id/google-forms-config",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
@@ -698,7 +716,7 @@ router.get(
 router.put(
   "/application-forms/:id/google-forms-config",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const { googleFormId, serviceAccountJson } = req.body as { googleFormId: string; serviceAccountJson?: string };
@@ -734,7 +752,7 @@ router.put(
 router.post(
   "/application-forms/:id/sync-google-forms",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
@@ -942,7 +960,7 @@ router.post(
 router.get(
   "/application-forms/:id/google-sheets-config",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));
@@ -960,7 +978,7 @@ router.get(
 router.put(
   "/application-forms/:id/google-sheets-config",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const { spreadsheetId, sheetName, serviceAccountJson } = req.body as { spreadsheetId: string; sheetName: string; serviceAccountJson?: string };
@@ -996,7 +1014,7 @@ router.put(
 router.post(
   "/application-forms/:id/sync-google-sheets",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params.id);
     const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, id));

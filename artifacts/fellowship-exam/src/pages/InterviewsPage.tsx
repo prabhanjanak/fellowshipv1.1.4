@@ -33,6 +33,7 @@ interface DoctorAssignment {
   id: number; candidateId: number; candidateCode: string; candidateName: string;
   status: string; scheduledAt: string | null;
   existingScore: { id: number; score: number; remarks: string | null; submittedAt: string } | null;
+  batchId?: number;
 }
 
 interface PanelEntry {

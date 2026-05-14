@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -17,7 +17,11 @@ import {
   Plus, Link2, Copy, Check, Eye, Users, Clock, ChevronRight, ArrowLeft, ExternalLink,
   FileCheck, FileX, Loader2, Trash2, Download, CreditCard, GripVertical, Settings2, X as XIcon,
   RefreshCw, CheckCheck, Ban, FileText, ImageIcon, ChevronDown, ChevronUp, Building2, Printer,
+  Edit3 as Edit, Save, AlertCircle, FileJson, CheckCircle2, LayoutDashboard, CalendarDays,
+  FileSignature, ExternalLink as ExtLink, FileType, CheckCircle
 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
+import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "../hooks/use-toast";
 
 interface CustomField {
@@ -52,6 +56,8 @@ interface Submission {
   otherTraining: string | null;
   medicalCouncilNumber: string | null;
   totalSurgeries: string | null;
+  diagnosticSkills: string | null;
+  surgicalExperience: string | null;
   publications: string | null; presentations: string | null;
   lor1Url: string | null; lor1RefName: string | null; lor1RefContact: string | null; lor1RefEmail: string | null;
   lor2Url: string | null; lor2RefName: string | null; lor2RefContact: string | null; lor2RefEmail: string | null;
@@ -60,6 +66,7 @@ interface Submission {
   declarationAccepted: boolean | null; submittedAt: string;
   reviewNotes: string | null; customAnswers?: Record<string, string>;
   readyForReview?: boolean; source?: string;
+  formData?: any;
 }
 interface Program { id: number; name: string; }
 
@@ -81,7 +88,7 @@ function parseCenterPreferences(cp: string | null | undefined, customAnswers?: a
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, string>;
     } catch { /* not JSON or invalid */ }
   }
-  
+
   // Fallback: search customAnswers for unit_* fields
   if (customAnswers && typeof customAnswers === "object") {
     const prefs: Record<string, string> = {};
@@ -102,6 +109,277 @@ function parseCenterPreferences(cp: string | null | undefined, customAnswers?: a
     return prefs;
   }
   return {};
+}
+
+function SubmissionFormDataEditor({ sectionsConfig, formData, onChange }: { sectionsConfig: any[], formData: any, onChange: (newData: any) => void }) {
+  const updateField = (id: string, mapping: string | undefined, value: any, isStandard?: boolean) => {
+    if (isStandard && mapping) {
+      onChange({ ...formData, [mapping]: value });
+    } else {
+      const currentFormData = formData.formData || {};
+      onChange({ ...formData, formData: { ...currentFormData, [id]: value } });
+    }
+  };
+
+  const getFieldValue = (id: string, mapping: string | undefined, isStandard?: boolean) => {
+    if (isStandard && mapping) {
+      return formData[mapping];
+    }
+    return formData.formData?.[id];
+  };
+
+  return (
+    <div className="space-y-12">
+      {sectionsConfig.map((section: any) => (
+        <motion.div 
+          key={section.id} 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6"
+        >
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
+              <span className="w-1 h-5 bg-orange-500 rounded-full"></span>
+              {section.title}
+            </h3>
+            <div className="h-px flex-1 bg-gradient-to-r from-slate-200 to-transparent"></div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+            {section.fields?.map((field: any) => {
+              if (field.type === 'heading' || field.type === 'static_text' || field.type === 'info') return null;
+              
+              const val = getFieldValue(field.id, field.mapping, field.isStandard);
+
+              // Conditional visibility logic
+              if (field.visibleIf) {
+                const targetVal = getFieldValue(field.visibleIf.field, undefined, false);
+                const standardTargetVal = getFieldValue(undefined, field.visibleIf.field, true);
+                const actualTargetVal = targetVal !== undefined ? targetVal : standardTargetVal;
+
+                const conditionValue = field.visibleIf.contains || field.visibleIf.equals;
+                
+                if (field.visibleIf.key) {
+                   if (actualTargetVal?.[field.visibleIf.key] !== conditionValue) return null;
+                } else if (field.visibleIf.contains) {
+                   if (!actualTargetVal || !actualTargetVal.includes(conditionValue)) return null;
+                } else if (field.visibleIf.equals) {
+                   if (actualTargetVal !== conditionValue) return null;
+                }
+              }
+
+              const isFullWidth = ['skills_table', 'surgery_table', 'qualification_matrix', 'textarea', 'checkbox_group', 'file'].includes(field.type);
+              
+              return (
+                <div key={field.id} className={`space-y-2.5 ${isFullWidth ? 'md:col-span-2' : ''}`}>
+                  <Label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">{field.label}</Label>
+                  
+                  {field.type === 'text' || field.type === 'email' || field.type === 'number' || field.type === 'phone' ? (
+                    <Input 
+                      type={field.type === 'phone' ? 'text' : field.type}
+                      value={val || ""} 
+                      onChange={(e) => updateField(field.id, field.mapping, e.target.value, field.isStandard)}
+                      className="bg-white/50 backdrop-blur-sm border-slate-200 focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 h-10 transition-all rounded-xl"
+                      placeholder={field.placeholder || field.label}
+                    />
+                  ) : field.type === 'textarea' ? (
+                    <Textarea 
+                      value={val || ""} 
+                      onChange={(e) => updateField(field.id, field.mapping, e.target.value, field.isStandard)}
+                      className="bg-white/50 backdrop-blur-sm border-slate-200 focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 min-h-[120px] transition-all rounded-xl"
+                      placeholder={field.label}
+                    />
+                  ) : field.type === 'select' ? (
+                    <Select value={val || ""} onValueChange={(v) => updateField(field.id, field.mapping, v, field.isStandard)}>
+                      <SelectTrigger className="bg-white/50 border-slate-200 h-11 rounded-xl transition-all">
+                        <SelectValue placeholder="Select Option" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl">
+                        {field.options?.map((opt: string) => (
+                          <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : field.type === 'radio' ? (
+                    <RadioGroup value={val || ""} onValueChange={(v) => updateField(field.id, field.mapping, v, field.isStandard)} className="flex flex-wrap gap-4 pt-1">
+                      {field.options?.map((opt: string) => (
+                        <div key={opt} className={`flex items-center space-x-3 bg-slate-50 px-4 py-2.5 rounded-xl border transition-all cursor-pointer ${val === opt ? 'border-orange-200 bg-orange-50/50' : 'border-slate-100 hover:border-slate-200'}`}>
+                          <RadioGroupItem value={opt} id={`${field.id}-${opt}`} />
+                          <Label htmlFor={`${field.id}-${opt}`} className="text-sm font-bold text-slate-700 cursor-pointer">{opt}</Label>
+                        </div>
+                      ))}
+                    </RadioGroup>
+                  ) : field.type === 'date' ? (
+                    <Input 
+                      type="date" 
+                      value={val || ""} 
+                      onChange={(e) => updateField(field.id, field.mapping, e.target.value, field.isStandard)}
+                      className="bg-white/50 border-slate-200 h-10 rounded-xl"
+                    />
+                  ) : field.type === 'checkbox' ? (
+                    <div className={`flex items-center space-x-3 p-4 rounded-xl border transition-all ${!!val ? 'border-orange-200 bg-orange-50/50' : 'border-slate-100 bg-slate-50/50'}`}>
+                      <Checkbox 
+                        id={field.id} 
+                        checked={!!val} 
+                        onCheckedChange={(checked) => updateField(field.id, field.mapping, !!checked, field.isStandard)} 
+                      />
+                      <Label htmlFor={field.id} className="text-sm font-bold text-slate-700 leading-none cursor-pointer">{field.label}</Label>
+                    </div>
+                  ) : field.type === 'checkbox_group' ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                      {field.options?.map((opt: string) => (
+                        <div key={opt} className={`flex items-center space-x-3 p-4 rounded-xl border transition-all ${val?.includes(opt) ? 'border-orange-200 bg-orange-50/50' : 'border-slate-100 bg-white hover:border-slate-200'}`}>
+                          <Checkbox 
+                            id={`${field.id}-${opt}`} 
+                            checked={val?.includes(opt)} 
+                            onCheckedChange={(checked) => {
+                              let current = Array.isArray(val) ? [...val] : [];
+                              if (checked) {
+                                if (opt === "None of the Above") current = [opt];
+                                else {
+                                  current = current.filter(i => i !== "None of the Above");
+                                  current.push(opt);
+                                }
+                              } else {
+                                current = current.filter(i => i !== opt);
+                              }
+                              updateField(field.id, field.mapping, current, field.isStandard);
+                            }} 
+                          />
+                          <Label htmlFor={`${field.id}-${opt}`} className="text-sm font-bold text-slate-700 cursor-pointer">{opt}</Label>
+                        </div>
+                      ))}
+                    </div>
+                  ) : field.type === 'skills_table' ? (
+                    <div className="overflow-hidden border border-slate-100 rounded-2xl shadow-sm bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50/50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-6 py-4 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Skill</th>
+                            {field.options?.map((opt: string) => (
+                              <th key={opt} className="px-6 py-4 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">{opt}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {field.rows?.map((row: string) => (
+                            <tr key={row} className="hover:bg-slate-50/30 transition-colors">
+                              <td className="px-6 py-4 font-bold text-slate-800">{row}</td>
+                              {field.options?.map((opt: string) => {
+                                const isChecked = (typeof val === 'string' ? JSON.parse(val || "{}") : (val || {}))[row] === opt;
+                                return (
+                                  <td key={opt} className="px-6 py-4 text-center">
+                                    <input
+                                      type="radio"
+                                      name={`${field.id}_${row}`}
+                                      checked={isChecked}
+                                      onChange={() => {
+                                        const current = typeof val === 'string' ? JSON.parse(val || "{}") : (val || {});
+                                        updateField(field.id, field.mapping, { ...current, [row]: opt }, field.isStandard);
+                                      }}
+                                      className="w-4 h-4 text-orange-600 border-slate-300 focus:ring-orange-500 transition-all"
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : field.type === 'surgery_table' ? (
+                    <div className="overflow-hidden border border-slate-100 rounded-2xl shadow-sm bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50/50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-6 py-4 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Surgery Type</th>
+                            <th className="px-6 py-4 text-center font-black text-orange-600 bg-orange-50/30 uppercase tracking-widest text-[10px]">Supervision</th>
+                            <th className="px-6 py-4 text-center font-black text-emerald-600 bg-emerald-50/30 uppercase tracking-widest text-[10px]">Independent</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {field.rows?.map((row: string) => {
+                            const data = (typeof val === 'string' ? JSON.parse(val || "{}") : (val || {}))[row] || {};
+                            return (
+                              <tr key={row} className="hover:bg-slate-50/30 transition-colors">
+                                <td className="px-6 py-4 font-bold text-slate-800">{row}</td>
+                                <td className="px-6 py-4 bg-orange-50/5">
+                                  <Input 
+                                    type="number"
+                                    value={data.supervision || ""}
+                                    onChange={(e) => {
+                                      const current = typeof val === 'string' ? JSON.parse(val || "{}") : (val || {});
+                                      updateField(field.id, field.mapping, { ...current, [row]: { ...data, supervision: parseInt(e.target.value) || 0 } }, field.isStandard);
+                                    }}
+                                    className="w-24 mx-auto h-9 text-center rounded-lg border-slate-200 focus:ring-orange-500/20"
+                                  />
+                                </td>
+                                <td className="px-6 py-4 bg-emerald-50/5">
+                                  <Input 
+                                    type="number"
+                                    value={data.independent || ""}
+                                    onChange={(e) => {
+                                      const current = typeof val === 'string' ? JSON.parse(val || "{}") : (val || {});
+                                      updateField(field.id, field.mapping, { ...current, [row]: { ...data, independent: parseInt(e.target.value) || 0 } }, field.isStandard);
+                                    }}
+                                    className="w-24 mx-auto h-9 text-center rounded-lg border-slate-200 focus:ring-emerald-500/20"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : field.type === 'qualification_matrix' ? (
+                    <div className="overflow-hidden border border-slate-100 rounded-2xl shadow-sm bg-white">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50/50 border-b border-slate-100">
+                          <tr>
+                            <th className="px-6 py-4 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Qualification</th>
+                            <th className="px-6 py-4 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">Yes</th>
+                            <th className="px-6 py-4 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">No</th>
+                            <th className="px-6 py-4 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">N/A</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {['DO (Diploma Ophthlmology)', 'MS/MD ( Masters in Ophthalmology)', 'DNB'].map((q: string) => {
+                            const current = typeof val === 'string' ? JSON.parse(val || "{}") : (val || {});
+                            return (
+                              <tr key={q} className="hover:bg-slate-50/30 transition-colors">
+                                <td className="px-6 py-4 font-bold text-slate-800">{q}</td>
+                                {['Yes', 'No', 'N/A'].map((option: string) => (
+                                  <td key={option} className="px-6 py-4 text-center">
+                                    <input
+                                      type="radio"
+                                      name={`${field.id}_${q}`}
+                                      checked={current[q] === option}
+                                      onChange={() => {
+                                        updateField(field.id, field.mapping, { ...current, [q]: option }, field.isStandard);
+                                      }}
+                                      className="w-4 h-4 text-orange-600 border-slate-300 focus:ring-orange-500"
+                                    />
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground italic p-4 border rounded-xl border-dashed bg-slate-50">
+                      Response data: {JSON.stringify(val)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  );
 }
 
 const SPEC_BADGE_COLORS: Record<string, string> = {
@@ -313,7 +591,7 @@ function CustomFieldEditor({
             </button>
           )}
         </div>
-        
+
         <div className="flex-1 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-8 space-y-1.5">
@@ -330,10 +608,10 @@ function CustomFieldEditor({
                 onValueChange={(v) => {
                   const newType = v as CustomField["type"];
                   const needsOpts = ["select", "radio", "checkbox_group"].includes(newType);
-                  onChange({ 
-                    ...field, 
-                    type: newType, 
-                    options: needsOpts && (!field.options || field.options.length === 0) ? ["Option 1"] : field.options 
+                  onChange({
+                    ...field,
+                    type: newType,
+                    options: needsOpts && (!field.options || field.options.length === 0) ? ["Option 1"] : field.options
                   });
                 }}
               >
@@ -389,8 +667,8 @@ function CustomFieldEditor({
                     className="h-8 text-sm focus-visible:ring-1"
                     placeholder={`Option ${idx + 1}`}
                   />
-                  <button 
-                    onClick={() => removeOption(idx)} 
+                  <button
+                    onClick={() => removeOption(idx)}
                     className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 transition-opacity"
                     title="Remove option"
                   >
@@ -406,9 +684,9 @@ function CustomFieldEditor({
                 ) : (
                   <span className="text-xs text-muted-foreground w-4 text-center">{((field.options?.length) || 0) + 1}.</span>
                 )}
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className="h-8 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 justify-start px-2"
                   onClick={addOption}
                 >
@@ -419,7 +697,7 @@ function CustomFieldEditor({
           )}
 
           <Separator className="my-2" />
-          
+
           <div className="flex items-center justify-between">
             {!isDisplayOnly ? (
               <div className="flex items-center gap-2">
@@ -431,7 +709,7 @@ function CustomFieldEditor({
                 <Label htmlFor={`req-${field.id}`} className="text-sm cursor-pointer font-medium">Required field</Label>
               </div>
             ) : <div />}
-            
+
             <Button variant="ghost" size="sm" onClick={onDelete} className="text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5">
               <Trash2 className="h-4 w-4" /> Delete Field
             </Button>
@@ -477,7 +755,6 @@ function RichTextArea({ value, onChange, placeholder, label }: { value: string; 
           ref={editorRef}
           contentEditable
           onInput={(e) => onChange(e.currentTarget.innerHTML)}
-          placeholder={placeholder}
           className="min-h-[120px] p-3 text-sm focus:outline-none overflow-y-auto prose prose-sm max-w-none dark:prose-invert"
           style={{ whiteSpace: "pre-wrap" }}
         />
@@ -492,11 +769,14 @@ export default function ApplicationFormsPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
+  const [viewSubId, setViewSubId] = useState<number | null>(null);
+  const [viewFormId, setViewFormId] = useState<number | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createdForm, setCreatedForm] = useState<ApplicationForm | null>(null);
   const [editForm, setEditForm] = useState<ApplicationForm | null>(null);
-  const [viewFormId, setViewFormId] = useState<number | null>(null);
-  const [viewSubId, setViewSubId] = useState<number | null>(null);
+  const [activeSubDetail, setActiveSubDetail] = useState<any | null>(null);
+  const [isEditingData, setIsEditingData] = useState(false);
+  const [tempFormData, setTempFormData] = useState<any>({});
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -594,8 +874,8 @@ export default function ApplicationFormsPage() {
   });
 
   const updateSubmission = useMutation({
-    mutationFn: ({ id, status, reviewNotes }: { id: number; status?: string; reviewNotes?: string }) =>
-      api.patch<Submission>(`/application-forms/submissions/${id}`, { status, reviewNotes }),
+    mutationFn: ({ id, status, reviewNotes, formData, fullName, email, phone }: any) => 
+      api.patch(`/application-forms/submissions/${id}`, { status, reviewNotes, formData, fullName, email, phone }),
     onSuccess: () => {
       toast({ title: "Submission updated" });
       qc.invalidateQueries({ queryKey: ["submissions", viewFormId] });
@@ -756,259 +1036,295 @@ export default function ApplicationFormsPage() {
   const deleteCustomField = (fields: CustomField[], setFields: (f: CustomField[]) => void, id: string) => {
     setFields(fields.filter((f) => f.id !== id));
   };
+  
+  // Reset editing state when submission changes
+  useEffect(() => {
+    setIsEditingData(false);
+    setTempFormData({});
+  }, [viewSubId]);
+
+  const handleEditData = () => {
+    if (!viewedSub) return;
+    setTempFormData({ 
+      fullName: viewedSub.fullName,
+      email: viewedSub.email,
+      phone: viewedSub.phone,
+      status: viewedSub.status,
+      reviewNotes: viewedSub.reviewNotes,
+      formData: { ...viewedSub.formData }
+    });
+    setIsEditingData(true);
+  };
+
+  const handleSaveData = () => {
+    if (!viewedSub) return;
+    updateSubmission.mutate({ 
+      id: viewedSub.id, 
+      ...tempFormData
+    }, {
+      onSuccess: (updated) => {
+        setActiveSubDetail(updated);
+        setIsEditingData(false);
+        toast({ title: "Submission Updated", description: "The submission has been updated successfully." });
+      }
+    });
+  };
 
   // Submission detail view
   if (viewFormId !== null && viewSubId !== null && viewedSub) {
-    const customFields = viewedForm?.customFields ?? [];
     return (
-      <div className="p-6 space-y-5 print-area">
-        <style>{`
-          @media print { 
-            aside, header, nav, .no-print { display: none !important; } 
-            body, main, .print-area { background: white !important; color: black !important; margin: 0; padding: 0; width: 100%; box-shadow: none !important; border: none !important; }
-            .print-area { padding: 1cm !important; }
-            .card { box-shadow: none !important; border: 1px solid #e2e8f0 !important; break-inside: avoid; }
-          }
-        `}</style>
-        <div className="flex items-center gap-3 no-print">
-          <Button variant="ghost" size="sm" onClick={() => setViewSubId(null)} className="gap-1">
-            <ArrowLeft className="h-4 w-4" /> Submissions
-          </Button>
-          <Badge className={STATUS_COLORS[viewedSub.status] ?? ""}>{viewedSub.status}</Badge>
-          <div className="flex gap-2 ml-auto no-print">
-            <Button 
-              variant="default" 
-              size="sm" 
-              onClick={() => window.print()} 
-              className="gap-2 bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 shadow-lg shadow-slate-200"
-            >
-              <Printer className="h-4 w-4" /> Print Only
-            </Button>
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex flex-col no-print"
+      >
+        <div className="flex-1 flex flex-col bg-slate-50/50">
+          {/* Glass Header */}
+          <div className="glass-header px-8 py-5 flex items-center justify-between border-b border-slate-200 bg-white/90 backdrop-blur-xl">
+            <div className="flex items-center gap-5">
+               <Button 
+                 variant="ghost" 
+                 size="icon" 
+                 onClick={() => setViewSubId(null)} 
+                 className="rounded-full hover:bg-slate-100 transition-all hover:scale-110 active:scale-95"
+               >
+                  <ArrowLeft className="w-5 h-5 text-slate-600" />
+               </Button>
+               <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-tight">{viewedSub.fullName}</h2>
+                  <div className="flex items-center gap-3 mt-1">
+                     <Badge className={`${STATUS_COLORS[viewedSub.status] || "bg-slate-100"} rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-widest border-none shadow-sm`}>
+                       {viewedSub.status}
+                     </Badge>
+                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                       <Clock className="w-3 h-3" /> 
+                       Submitted {new Date(viewedSub.submittedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                     </span>
+                  </div>
+               </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+               <Button variant="outline" size="sm" onClick={() => window.print()} className="rounded-xl border-slate-200 hover:bg-slate-50 transition-all font-bold px-4">
+                  <Printer className="w-4 h-4 mr-2" /> Print PDF
+               </Button>
+               
+               {isEditingData ? (
+                 <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => setIsEditingData(false)} className="rounded-xl font-bold px-4">Cancel</Button>
+                    <Button size="sm" onClick={handleSaveData} disabled={updateSubmission.isPending} className="rounded-xl orange-gradient text-white border-none shadow-lg shadow-orange-500/20 px-6 font-bold hover:scale-[1.02] active:scale-[0.98] transition-all">
+                      {updateSubmission.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                      Save Changes
+                    </Button>
+                 </div>
+               ) : (
+                 <Button size="sm" onClick={handleEditData} className="rounded-xl bg-slate-900 hover:bg-slate-800 text-white shadow-xl hover:shadow-2xl px-6 font-bold transition-all hover:-translate-y-0.5">
+                   <Edit className="w-4 h-4 mr-2" /> Edit Submission
+                 </Button>
+               )}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-auto p-8 fancy-scrollbar">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={isEditingData ? 'edit' : 'view'}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="max-w-5xl mx-auto"
+              >
+                {isEditingData ? (
+                  <Card className="border-none shadow-2xl rounded-3xl overflow-hidden glass-card">
+                     <div className="bg-slate-900/5 px-8 py-8 border-b border-white/20">
+                        <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-2xl bg-orange-500 text-white flex items-center justify-center shadow-lg">
+                              <Edit className="w-5 h-5" />
+                           </div>
+                           <div>
+                              <h3 className="text-xl font-black text-slate-900 tracking-tight">Response Editor</h3>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">Modify candidate details and form responses</p>
+                           </div>
+                        </div>
+                     </div>
+                     <CardContent className="p-10 space-y-10">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                           <div className="space-y-2">
+                              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Full Name</Label>
+                              <Input 
+                                value={tempFormData.fullName || ""} 
+                                onChange={(e) => setTempFormData({ ...tempFormData, fullName: e.target.value })}
+                                className="rounded-xl bg-slate-50/50 border-slate-200 focus:ring-4 focus:ring-orange-500/10"
+                              />
+                           </div>
+                           <div className="space-y-2">
+                              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Email</Label>
+                              <Input 
+                                value={tempFormData.email || ""} 
+                                onChange={(e) => setTempFormData({ ...tempFormData, email: e.target.value })}
+                                className="rounded-xl bg-slate-50/50 border-slate-200 focus:ring-4 focus:ring-orange-500/10"
+                              />
+                           </div>
+                           <div className="space-y-2">
+                              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Status</Label>
+                              <Select value={tempFormData.status || "pending"} onValueChange={(v) => setTempFormData({ ...tempFormData, status: v })}>
+                                <SelectTrigger className="rounded-xl bg-slate-50/50 border-slate-200">
+                                   <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl">
+                                  <SelectItem value="pending">Pending</SelectItem>
+                                  <SelectItem value="reviewed">Reviewed</SelectItem>
+                                  <SelectItem value="approved">Approved</SelectItem>
+                                  <SelectItem value="rejected">Rejected</SelectItem>
+                                </SelectContent>
+                              </Select>
+                           </div>
+                        </div>
+                        
+                        <Separator className="opacity-50" />
+                        
+                        <SubmissionFormDataEditor 
+                          sectionsConfig={viewedForm?.sectionsConfig || []} 
+                          formData={tempFormData} 
+                          onChange={(newData) => setTempFormData(newData)} 
+                        />
+                     </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Left Column: Metadata & Actions */}
+                    <div className="lg:col-span-1 space-y-8">
+                       <Card className="border-none shadow-premium rounded-3xl p-8 bg-white overflow-hidden relative">
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 rounded-full -mr-16 -mt-16 pointer-events-none"></div>
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                             <FileText className="w-3 h-3" /> Candidate Summary
+                          </h4>
+                          <div className="space-y-6">
+                             <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-400 border border-slate-100 shadow-sm">
+                                   <FileType className="w-6 h-6" />
+                                </div>
+                                <div>
+                                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email Address</p>
+                                   <p className="text-sm font-bold text-slate-900 break-all">{viewedSub.email}</p>
+                                </div>
+                             </div>
+                             <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-slate-400 border border-slate-100 shadow-sm">
+                                   <CalendarDays className="w-6 h-6" />
+                                </div>
+                                <div>
+                                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone Number</p>
+                                   <p className="text-sm font-bold text-slate-900">{viewedSub.phone || "Not Provided"}</p>
+                                </div>
+                             </div>
+                          </div>
+                       </Card>
+                       
+                       <Card className="border-none shadow-premium rounded-3xl p-8 bg-white overflow-hidden">
+                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                             <FileSignature className="w-3 h-3" /> Internal Review Notes
+                          </h4>
+                          <Textarea 
+                            className="text-sm border-none bg-slate-50/50 rounded-2xl focus:ring-0 min-h-[180px] resize-none font-medium placeholder:text-slate-300" 
+                            placeholder="Add internal evaluation notes, interview results, or credential verification status..."
+                            value={viewedSub.reviewNotes || ""}
+                            onChange={(e) => updateSubmission.mutate({ id: viewedSub.id, reviewNotes: e.target.value })}
+                          />
+                       </Card>
+                       <Card className="border-none shadow-premium rounded-3xl p-8 bg-white overflow-hidden no-print">
+                           <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+                              <CheckCircle2 className="w-3 h-3" /> Management Actions
+                           </h4>
+                           <div className="space-y-4">
+                              <div className="space-y-2">
+                                <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Update Status</Label>
+                                <Select value={viewedSub.status} onValueChange={(v) => updateSubmission.mutate({ id: viewedSub.id, status: v })}>
+                                  <SelectTrigger className="rounded-xl bg-slate-50 border-slate-100 h-11 font-bold text-xs uppercase tracking-wider">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-2xl">
+                                    <SelectItem value="pending">PENDING</SelectItem>
+                                    <SelectItem value="reviewed">REVIEWED</SelectItem>
+                                    <SelectItem value="rejected">REJECTED</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              
+                              <Separator className="opacity-50 my-2" />
+                              
+                              <Button 
+                                className="w-full h-12 rounded-xl orange-gradient text-white border-none shadow-lg shadow-orange-500/20 font-bold hover:scale-[1.02] active:scale-[0.98] transition-all gap-2"
+                                onClick={() => approveSubmission.mutate(viewedSub.id)}
+                                disabled={approveSubmission.isPending || viewedSub.status === "approved"}
+                              >
+                                {approveSubmission.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCheck className="h-4 w-4" />}
+                                {viewedSub.status === "approved" ? "ALREADY APPROVED" : "APPROVE & ENROLL"}
+                              </Button>
+                              
+                              <Button 
+                                variant="outline" 
+                                className="w-full h-11 rounded-xl border-slate-200 text-slate-600 font-bold hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all gap-2"
+                                onClick={() => updateSubmission.mutate({ id: viewedSub.id, status: "rejected" })}
+                                disabled={updateSubmission.isPending}
+                              >
+                                <Ban className="h-4 w-4" /> REJECT APPLICATION
+                              </Button>
+                           </div>
+                        </Card>
+                    </div>
+                     
+                     {/* Right Column: Form Responses */}
+                     <div className="lg:col-span-2 space-y-8">
+                        {(viewedForm?.sectionsConfig || []).map((section: any) => {
+                          const visibleFields = section.fields.filter((f: any) => 
+                            f.type !== 'info' && f.type !== 'heading' && f.type !== 'static_text'
+                          );
+                          
+                          return (
+                            <Card key={section.id} className="border-none shadow-premium rounded-3xl overflow-hidden bg-white">
+                              <div className="bg-slate-50/50 px-8 py-5 border-b border-slate-100 flex items-center justify-between">
+                                 <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{section.title}</h4>
+                              </div>
+                              <div className="divide-y divide-slate-50">
+                                {visibleFields.map((field: any) => {
+                                  const val = field.isStandard && field.mapping ? viewedSub[field.mapping] : viewedSub.formData?.[field.id];
+                                  if (val === undefined || val === null || val === "") return null;
+                                  
+                                  return (
+                                    <div key={field.id} className="px-8 py-5 grid grid-cols-1 md:grid-cols-3 gap-4 hover:bg-slate-50/30 transition-colors">
+                                       <div className="md:col-span-1">
+                                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest pt-1 leading-tight">{field.label}</p>
+                                       </div>
+                                       <div className="md:col-span-2">
+                                          {field.type === 'file' ? (
+                                            <DocValue label={field.label} url={String(val)} />
+                                          ) : typeof val === 'object' ? (
+                                            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
+                                               <pre className="text-[10px] font-mono text-slate-600 overflow-x-auto">
+                                                 {JSON.stringify(val, null, 2)}
+                                               </pre>
+                                            </div>
+                                          ) : (
+                                            <p className="text-sm font-bold text-slate-800 break-words leading-relaxed">{String(val)}</p>
+                                          )}
+                                       </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </Card>
+                          );
+                        })}
+                     </div>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </div>
-        {/* Specialization(s) & Preferred Centers banner — prominently shown at the top */}
-        {(() => {
-          const specs = parseSpecializations(viewedSub.specialization);
-          const centerPrefs = parseCenterPreferences(viewedSub.centerPreference, viewedSub.customAnswers, viewedForm?.sectionsConfig);
-          if (specs.length === 0) return null;
-          return (
-            <div className={`rounded-lg border p-5 ${specs.length > 1 ? "border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800" : "border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800"}`}>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-black uppercase tracking-widest text-slate-500">Applied Specialization & Center Preference</span>
-                  {specs.length > 1 && (
-                    <Badge className="bg-orange-200 text-orange-900 border-none text-[10px] h-5">Multi-Specialization</Badge>
-                  )}
-                </div>
-                <Badge variant="outline" className="text-[10px] font-mono">{viewedSub.status.toUpperCase()}</Badge>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {specs.map((sp) => (
-                  <div key={sp} className="bg-white dark:bg-slate-900 rounded-xl p-4 border border-slate-200 shadow-sm flex flex-col gap-2">
-                    <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-black uppercase tracking-tighter w-fit ${SPEC_BADGE_COLORS[sp] ?? "bg-gray-100 text-gray-700"}`}>
-                      {sp}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Building2 className="h-4 w-4 text-primary" />
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Preferred Location</span>
-                        <span className="text-sm font-bold text-slate-800">{centerPrefs[sp] || "No preference set"}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Card>
-            <CardHeader><CardTitle className="text-base">Personal Details</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {[
-                ["Full Name", viewedSub.fullName], ["Email", viewedSub.email],
-                ["Phone", viewedSub.phone], ["Date of Birth", viewedSub.dateOfBirth],
-                ["Marital Status", viewedSub.maritalStatus],
-                ["Permanent Address", viewedSub.permanentAddress],
-                ["Mailing Address", viewedSub.mailingAddress],
-                ["Referred By", viewedSub.referredByName],
-                ["Referral Source", viewedSub.referralSource],
-                ["Spouse Details", viewedSub.spouseDetails],
-              ].filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} className="flex justify-between border-b pb-1.5 last:border-0">
-                  <span className="font-medium text-muted-foreground shrink-0 mr-3">{k}</span>
-                  <span className="text-right max-w-56 break-words">{v}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-base">Education &amp; Experience</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              {[
-                ["MBBS / Degree", viewedSub.degree], ["Medical College", viewedSub.medicalCollege],
-                ["University", viewedSub.university],
-                ["PG Qualifications", viewedSub.pgQualifications],
-                ["DO", viewedSub.doQualification ? `Yes${viewedSub.doDetails ? " — " + viewedSub.doDetails : ""}` : null],
-                ["MS / MD", viewedSub.msMdQualification ? `Yes${viewedSub.msMdDetails ? " — " + viewedSub.msMdDetails : ""}` : null],
-                ["DNB", viewedSub.dnbQualification ? `Yes${viewedSub.dnbDetails ? " — " + viewedSub.dnbDetails : ""}` : null],
-                ["Other Training", viewedSub.otherTraining],
-                ["MC Reg. Number", viewedSub.medicalCouncilNumber],
-                ["Total Surgeries", viewedSub.totalSurgeries],
-                ["Publications", viewedSub.publications],
-                ["Presentations", viewedSub.presentations],
-              ].filter(([, v]) => v).map(([k, v]) => (
-                <div key={k} className="flex justify-between border-b pb-1.5 last:border-0">
-                  <span className="font-medium text-muted-foreground shrink-0 mr-3">{k}</span>
-                  <span className="text-right max-w-56 break-words">{v}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader><CardTitle className="text-base">Documents &amp; References</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              {[
-                { label: "LOR 1", url: viewedSub.lor1Url, refName: viewedSub.lor1RefName, refContact: viewedSub.lor1RefContact, refEmail: viewedSub.lor1RefEmail },
-                { label: "LOR 2", url: viewedSub.lor2Url, refName: viewedSub.lor2RefName, refContact: viewedSub.lor2RefContact, refEmail: viewedSub.lor2RefEmail },
-              ].map(({ label, url, refName, refContact, refEmail }) => (
-                <div key={label} className="space-y-1 border-b pb-2 last:border-0">
-                  <div className="flex items-center justify-between text-sm gap-2">
-                    <span className="font-medium text-muted-foreground">{label}</span>
-                    <DocValue label={label} url={url} />
-                  </div>
-                  {(refName || refContact || refEmail) && (
-                    <div className="pl-2 space-y-0.5 text-xs text-muted-foreground">
-                      {refName && <div>Referee: <span className="text-foreground">{refName}</span></div>}
-                      {refContact && <div>Contact: <span className="text-foreground">{refContact}</span></div>}
-                      {refEmail && <div>Email: <span className="text-foreground">{refEmail}</span></div>}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {[
-                { label: "Payment Reference", url: viewedSub.paymentUrl },
-                { label: "Passport Photo", url: viewedSub.photoUrl },
-              ].map(({ label, url }) => (
-                <div key={label} className="flex items-center justify-between text-sm gap-2 border-b pb-2 last:border-0">
-                  <span className="text-muted-foreground flex-shrink-0">{label}</span>
-                  <DocValue label={label} url={url} />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-          {(viewedSub.healthDeclaration || viewedSub.otherInformation) && (
-            <Card className="md:col-span-2">
-              <CardHeader><CardTitle className="text-base">Health &amp; Additional Information</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {viewedSub.healthDeclaration && (
-                  <div className="border-b pb-2">
-                    <span className="font-medium text-muted-foreground block mb-1">Health Declaration</span>
-                    <p className="whitespace-pre-wrap">{viewedSub.healthDeclaration}</p>
-                  </div>
-                )}
-                {viewedSub.otherInformation && (
-                  <div>
-                    <span className="font-medium text-muted-foreground block mb-1">Other Information</span>
-                    <p className="whitespace-pre-wrap">{viewedSub.otherInformation}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Clinical Skills & Experience */}
-          {(viewedSub.diagnosticSkills || viewedSub.surgicalExperience) && (
-            <Card className="md:col-span-2">
-              <CardHeader><CardTitle className="text-base">Clinical Skills & Surgical Experience</CardTitle></CardHeader>
-              <CardContent className="space-y-6 text-sm">
-                {viewedSub.diagnosticSkills && (() => {
-                  try {
-                    const skills = JSON.parse(viewedSub.diagnosticSkills);
-                    return (
-                      <div>
-                        <span className="font-medium text-muted-foreground block mb-2">Diagnostic Skills</span>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          {Object.entries(skills).map(([skill, val]) => (
-                            <div key={skill} className="flex flex-col border rounded p-2 bg-muted/10">
-                              <span className="text-xs text-muted-foreground">{skill}</span>
-                              <span className="font-medium">{val as string}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  } catch { return null; }
-                })()}
-                {viewedSub.surgicalExperience && (() => {
-                  try {
-                    const exp = JSON.parse(viewedSub.surgicalExperience);
-                    return (
-                      <div>
-                        <span className="font-medium text-muted-foreground block mb-2">Surgical Experience (No. of Procedures)</span>
-                        <div className="overflow-x-auto">
-                          <table className="w-full border-collapse">
-                            <thead>
-                              <tr className="bg-muted/50">
-                                <th className="text-left p-2 border">Procedure</th>
-                                <th className="text-center p-2 border">Under Supervision</th>
-                                <th className="text-center p-2 border">Independently</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(exp).map(([proc, vals]: [string, any]) => (
-                                <tr key={proc}>
-                                  <td className="p-2 border font-medium">{proc}</td>
-                                  <td className="p-2 border text-center">{vals.supervision ?? 0}</td>
-                                  <td className="p-2 border text-center">{vals.independent ?? 0}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  } catch { return null; }
-                })()}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card className="no-print">
-            <CardHeader><CardTitle className="text-base">Review Actions</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div>
-                <Label className="text-sm">Status</Label>
-                <Select value={viewedSub.status}
-                  onValueChange={(v) => updateSubmission.mutate({ id: viewedSub.id, status: v })}>
-                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="reviewed">Reviewed</SelectItem>
-                    <SelectItem value="rejected">Rejected</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Separator />
-              <Button className="w-full gap-2"
-                onClick={() => approveSubmission.mutate(viewedSub.id)}
-                disabled={approveSubmission.isPending || viewedSub.status === "approved"}>
-                {approveSubmission.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
-                {viewedSub.status === "approved" ? "Already Approved" : "Approve & Create Candidate"}
-              </Button>
-              <Button variant="destructive" className="w-full gap-2"
-                onClick={() => updateSubmission.mutate({ id: viewedSub.id, status: "rejected" })}
-                disabled={updateSubmission.isPending}>
-                <FileX className="h-4 w-4" /> Reject Application
-              </Button>
-              <p className="text-xs text-muted-foreground">Declaration: {viewedSub.declarationAccepted ? "Accepted" : "Not accepted"}</p>
-              <p className="text-xs text-muted-foreground">Submitted: {new Date(viewedSub.submittedAt).toLocaleString("en-IN")}</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+      </motion.div>
     );
   }
 
@@ -1027,173 +1343,203 @@ export default function ApplicationFormsPage() {
       if (allFilteredSelected) setSelectedIds([]);
       else setSelectedIds(filteredSubs.map((s) => s.id));
     };
+    const totalApplications = submissions.reduce((acc, s) => acc + parseSpecializations(s.specialization).length, 0);
+    const today = new Date().toLocaleDateString("en-IN");
+    const todayApplications = submissions.reduce((acc, s) => {
+      if (new Date(s.submittedAt).toLocaleDateString("en-IN") === today) {
+        return acc + parseSpecializations(s.specialization).length;
+      }
+      return acc;
+    }, 0);
+
     const toggleSelect = (id: number) =>
       setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
 
     return (
-      <div className="p-6 space-y-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => { setViewFormId(null); setViewSubId(null); setStatusFilter("all"); setSelectedIds([]); }} className="gap-1">
-              <ArrowLeft className="h-4 w-4" /> Back
+      <motion.div 
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="p-8 space-y-8"
+      >
+        <div className="flex items-center justify-between gap-6 flex-wrap">
+          <div className="flex items-center gap-5">
+            <Button variant="ghost" size="icon" onClick={() => { setViewFormId(null); setViewSubId(null); setStatusFilter("all"); setSelectedIds([]); }} className="rounded-full hover:bg-slate-100">
+              <ArrowLeft className="w-5 h-5 text-slate-600" />
             </Button>
             <div>
-              <h1 className="text-xl font-bold">{viewedForm?.title}</h1>
-              <p className="text-sm text-muted-foreground">{submissions.length} submissions · {readyCount} ready for review</p>
+               <div className="flex items-center gap-2 mb-1">
+                  <Badge className="bg-slate-900 text-white border-none rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-widest">
+                     Management
+                  </Badge>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                     <FileText className="w-3 h-3" /> {viewedForm?.title}
+                  </span>
+               </div>
+               <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Submissions Queue</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" size="sm" className="gap-1.5"
+          
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" className="rounded-xl border-slate-200 font-bold px-4"
               onClick={() => syncGoogleSheets.mutate(viewFormId)}
               disabled={syncGoogleSheets.isPending}>
-              {syncGoogleSheets.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              Sync Google Sheets
+              {syncGoogleSheets.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Sync Sheets
             </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportExcel(viewFormId)} disabled={exporting || submissions.length === 0}>
-              {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-              Export to Excel
+            <Button variant="outline" size="sm" className="rounded-xl border-slate-200 font-bold px-4" onClick={() => exportExcel(viewFormId)} disabled={exporting || submissions.length === 0}>
+              {exporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+              Excel Export
             </Button>
           </div>
         </div>
 
-        {/* Filter tabs */}
-        <div className="flex gap-1 flex-wrap">
-          {(["all", "ready", "pending", "approved", "rejected"] as const).map((f) => (
-            <Button key={f} size="sm" variant={statusFilter === f ? "default" : "outline"}
-              className="h-7 text-xs px-3"
-              onClick={() => { setStatusFilter(f); setSelectedIds([]); }}>
-              {f === "all" ? `All (${submissions.length})` : f === "ready" ? `Ready for Review (${readyCount})` : `${f.charAt(0).toUpperCase() + f.slice(1)} (${submissions.filter((s) => s.status === f).length})`}
-            </Button>
-          ))}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+           {[
+             { label: "Total Apps", value: totalApplications, sub: "Across all specializations", color: "blue" },
+             { label: "Today", value: todayApplications, sub: today, color: "emerald" },
+             { label: "Candidates", value: submissions.length, sub: "Unique applicants", color: "orange" },
+             { label: "Pending", value: submissions.filter(s => s.status === 'pending').length, sub: "Awaiting review", color: "slate" }
+           ].map((stat, idx) => (
+             <Card key={idx} className="border-none shadow-premium rounded-3xl p-6 bg-white overflow-hidden relative group">
+                <div className={`absolute top-0 right-0 w-24 h-24 bg-${stat.color}-500/5 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform`}></div>
+                <p className={`text-[10px] font-black text-${stat.color}-600 uppercase tracking-widest mb-1`}>{stat.label}</p>
+                <p className="text-3xl font-black text-slate-900">{stat.value}</p>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 opacity-70">{stat.sub}</p>
+             </Card>
+           ))}
         </div>
 
-        {/* Bulk action toolbar */}
-        {selectedIds.length > 0 && (
-          <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-4 py-2">
-            <span className="text-sm font-medium">{selectedIds.length} selected</span>
-            <Button size="sm" className="gap-1.5 h-7 text-xs"
-              onClick={() => bulkAction.mutate({ formId: viewFormId, action: "approve", ids: selectedIds })}
-              disabled={bulkAction.isPending}>
-              {bulkAction.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCheck className="h-3 w-3" />}
-              Approve All
-            </Button>
-            <Button size="sm" variant="destructive" className="gap-1.5 h-7 text-xs"
-              onClick={() => bulkAction.mutate({ formId: viewFormId, action: "reject", ids: selectedIds })}
-              disabled={bulkAction.isPending}>
-              <Ban className="h-3 w-3" /> Reject All
-            </Button>
-            <Button size="sm" variant="destructive" className="gap-1.5 h-7 text-xs bg-red-600 hover:bg-red-700"
-              onClick={() => {
-                if (confirm(`Are you sure you want to delete ${selectedIds.length} submissions? This cannot be undone.`)) {
-                  bulkDeleteSubsMutation.mutate(selectedIds);
-                }
-              }}
-              disabled={bulkDeleteSubsMutation.isPending}>
-              {bulkDeleteSubsMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              Delete Selected
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setSelectedIds([])}>
-              Clear
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+           <div className="flex gap-1.5 p-1 bg-slate-100 rounded-2xl w-fit">
+             {(["all", "ready", "pending", "approved", "rejected"] as const).map((f) => (
+               <Button 
+                 key={f} 
+                 size="sm" 
+                 variant={statusFilter === f ? "default" : "ghost"}
+                 className={`rounded-xl text-[10px] font-black uppercase tracking-widest px-4 h-9 ${statusFilter === f ? 'bg-white text-slate-900 shadow-sm hover:bg-white' : 'text-slate-500 hover:text-slate-900'}`}
+                 onClick={() => { setStatusFilter(f); setSelectedIds([]); }}>
+                 {f}
+                 <Badge className="ml-2 bg-slate-200 text-slate-600 border-none group-hover:bg-slate-300">
+                    {f === "all" ? submissions.length : f === "ready" ? readyCount : submissions.filter((s) => s.status === f).length}
+                 </Badge>
+               </Button>
+             ))}
+           </div>
+           
+           {selectedIds.length > 0 && (
+             <motion.div 
+               initial={{ opacity: 0, x: 20 }}
+               animate={{ opacity: 1, x: 0 }}
+               className="flex items-center gap-3 bg-slate-900 text-white rounded-2xl px-5 py-2 shadow-xl"
+             >
+               <span className="text-xs font-bold mr-2">{selectedIds.length} Selected</span>
+               <Button size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-[10px] font-black uppercase h-8 px-3"
+                 onClick={() => bulkAction.mutate({ formId: viewFormId, action: "approve", ids: selectedIds })}
+                 disabled={bulkAction.isPending}>
+                 Approve
+               </Button>
+               <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-300 text-[10px] font-black uppercase h-8 px-3"
+                 onClick={() => {
+                   if (confirm(`Delete ${selectedIds.length} submissions?`)) bulkDeleteSubsMutation.mutate(selectedIds);
+                 }}
+                 disabled={bulkDeleteSubsMutation.isPending}>
+                 Delete
+               </Button>
+             </motion.div>
+           )}
+        </div>
 
-        {subsLoading ? (
-          <div className="text-center py-12 text-muted-foreground">Loading submissions…</div>
-        ) : filteredSubs.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            {submissions.length === 0 ? "No submissions yet. Share the form link with candidates." : "No submissions match this filter."}
-          </div>
-        ) : (
-          <Card>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b bg-muted/40">
-                    <tr>
-                      <th className="px-4 py-3">
-                        <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} className="h-3.5 w-3.5 cursor-pointer" />
-                      </th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Email</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Specialization</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Source</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground">Submitted</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSubs.map((s) => (
-                      <tr key={s.id} className={`border-b last:border-0 hover:bg-muted/20 ${selectedIds.includes(s.id) ? "bg-blue-50" : ""}`}>
-                        <td className="px-4 py-3">
-                          <input type="checkbox" checked={selectedIds.includes(s.id)} onChange={() => toggleSelect(s.id)} className="h-3.5 w-3.5 cursor-pointer" />
-                        </td>
-                        <td className="px-4 py-3 font-medium">
-                          <div className="flex items-center gap-1.5">
-                            {s.fullName}
-                            {s.readyForReview && <span className="inline-flex h-1.5 w-1.5 rounded-full bg-green-500" title="Ready for review" />}
+        <Card className="border-none shadow-2xl rounded-3xl overflow-hidden bg-white">
+          <div className="overflow-x-auto fancy-scrollbar">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50/50 border-b border-slate-100">
+                  <th className="px-6 py-5 w-10">
+                    <Checkbox checked={allFilteredSelected} onCheckedChange={toggleSelectAll} className="rounded-md border-slate-300" />
+                  </th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Candidate</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Applied For</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
+                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Submitted</th>
+                  <th className="text-right px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filteredSubs.map((s) => (
+                  <tr key={s.id} className={`group hover:bg-slate-50/50 transition-colors ${selectedIds.includes(s.id) ? "bg-orange-50/30" : ""}`}>
+                    <td className="px-6 py-5">
+                      <Checkbox checked={selectedIds.includes(s.id)} onCheckedChange={() => toggleSelect(s.id)} className="rounded-md border-slate-300" />
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-col">
+                        <span className="font-black text-slate-900 text-base leading-tight group-hover:text-orange-600 transition-colors cursor-pointer flex items-center gap-2" onClick={() => setViewSubId(s.id)}>
+                           {s.fullName}
+                           {s.readyForReview && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{s.email}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      {(() => {
+                        const specs = parseSpecializations(s.specialization);
+                        return (
+                          <div className="flex flex-wrap gap-1.5">
+                            {specs.map((sp) => (
+                              <Badge key={sp} className={`${SPEC_BADGE_COLORS[sp] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none`}>
+                                 {sp}
+                              </Badge>
+                            ))}
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground text-xs">{s.email}</td>
-                        <td className="px-4 py-3">
-                          {(() => {
-                            const specs = parseSpecializations(s.specialization);
-                            if (specs.length === 0) return <span className="text-muted-foreground">—</span>;
-                            return (
-                              <div className="flex flex-wrap gap-1">
-                                {specs.map((sp) => (
-                                  <span key={sp} className={`inline-block text-xs px-1.5 py-0.5 rounded font-medium ${SPEC_BADGE_COLORS[sp] ?? "bg-gray-100 text-gray-700"}`}>{sp}</span>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge className={STATUS_COLORS[s.status] ?? ""} variant="secondary">{s.status}</Badge>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {s.source === "google_sheets" ? "Google Sheets" : s.source === "google_forms" ? "Google Forms" : "Internal"}
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {new Date(s.submittedAt).toLocaleDateString("en-IN")}
-                        </td>
-                        <td className="px-4 py-3 text-right flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" className="gap-1 h-7" onClick={() => setViewSubId(s.id)}>
-                            <Eye className="h-3.5 w-3.5" /> Review
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600"
-                            onClick={() => {
-                              if (confirm("Are you sure you want to delete this submission?")) {
-                                deleteSubMutation.mutate(s.id);
-                              }
-                            }}
-                            disabled={deleteSubMutation.isPending}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-6 py-5">
+                      <Badge className={`${STATUS_COLORS[s.status] ?? "bg-slate-100"} rounded-full px-3 py-0.5 text-[9px] font-black uppercase tracking-widest border-none`}>
+                        {s.status}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-5">
+                       <p className="text-xs font-bold text-slate-700">{new Date(s.submittedAt).toLocaleDateString()}</p>
+                       <p className="text-[10px] font-medium text-slate-400">{new Date(s.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                       <Button 
+                         variant="ghost" 
+                         size="sm" 
+                         onClick={() => setViewSubId(s.id)}
+                         className="rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-900 hover:text-white"
+                       >
+                          View Detail
+                       </Button>
+                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </motion.div>
     );
   }
 
   // Forms list view
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="p-10 space-y-10">
+      <div className="flex items-center justify-between gap-6 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold">Application Forms</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">Generate shareable links for candidate applications</p>
+           <div className="flex items-center gap-2 mb-1">
+              <Badge className="bg-orange-500 text-white border-none rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-widest">
+                 System
+              </Badge>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                 <Settings2 className="w-3 h-3" /> Configuration
+              </span>
+           </div>
+           <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Application Forms</h1>
+           <p className="text-sm text-slate-500 font-medium mt-2">Manage dynamic application entry points and program enrollment</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" /> New Form
+        <Button onClick={() => setCreateOpen(true)} className="rounded-2xl orange-gradient text-white border-none shadow-xl shadow-orange-500/20 px-8 py-6 font-bold hover:scale-[1.02] active:scale-[0.98] transition-all gap-2">
+          <Plus className="h-5 w-5" /> NEW FORM
         </Button>
       </div>
 
@@ -1209,79 +1555,109 @@ export default function ApplicationFormsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {forms.map((form) => (
-            <Card key={form.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-base">{form.title}</h3>
-                      <Badge variant={form.isActive ? "default" : "secondary"} className="text-xs">
-                        {form.isActive ? "Active" : "Inactive"}
-                      </Badge>
-                      {form.pendingCount > 0 && (
-                        <Badge className="bg-yellow-100 text-yellow-800 text-xs">{form.pendingCount} pending</Badge>
-                      )}
-                      {(form.customFields?.length ?? 0) > 0 && (
-                        <Badge variant="outline" className="text-xs gap-1">
-                          <Settings2 className="h-2.5 w-2.5" />
-                          {form.customFields!.length} custom field{form.customFields!.length > 1 ? "s" : ""}
-                        </Badge>
-                      )}
-                    </div>
-                    {form.description && (
-                      <p className="text-sm text-muted-foreground mt-1">{form.description}</p>
-                    )}
-                    <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground flex-wrap">
-                      <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {form.submissionCount} submissions</span>
-                      {form.deadline && (
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" /> Deadline: {new Date(form.deadline).toLocaleDateString("en-IN")}
-                        </span>
-                      )}
-                      <span>Program: {form.programName ?? `#${form.programId}`}</span>
-                    </div>
-                    <div className="mt-3 flex items-center gap-2">
-                      <code className="text-xs bg-muted rounded px-2 py-1 flex-1 truncate max-w-sm">
-                        {buildFormLink(form.token)}
-                      </code>
-                      <Button variant="outline" size="sm" className="gap-1 h-7 shrink-0" onClick={() => copyLink(form)}>
-                        {copiedId === form.id ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                        {copiedId === form.id ? "Copied!" : "Copy"}
-                      </Button>
+            <motion.div
+              layout
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              key={form.id}
+            >
+              <Card className="border-none shadow-premium rounded-3xl overflow-hidden bg-white group hover:shadow-2xl transition-all duration-300">
+                <CardContent className="p-0">
+                  <div className="p-8">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Badge className={`${form.isActive ? "bg-emerald-500" : "bg-slate-400"} text-white border-none rounded-full px-3 py-0.5 text-[9px] font-black uppercase tracking-widest shadow-sm`}>
+                            {form.isActive ? "Active" : "Paused"}
+                          </Badge>
+                          {form.pendingCount > 0 && (
+                            <Badge className="bg-orange-500 text-white border-none rounded-full px-3 py-0.5 text-[9px] font-black uppercase tracking-widest shadow-sm">
+                              {form.pendingCount} Pending
+                            </Badge>
+                          )}
+                        </div>
+                        <h3 className="text-xl font-black text-slate-900 tracking-tight group-hover:text-orange-600 transition-colors">{form.title}</h3>
+                        {form.description && (
+                          <p className="text-sm text-slate-500 font-medium line-clamp-1 mt-1">{form.description}</p>
+                        )}
+                        
+                        <div className="flex items-center gap-5 mt-5 flex-wrap">
+                           <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-500 flex items-center justify-center border border-blue-100">
+                                 <Users className="w-4 h-4" />
+                              </div>
+                              <div>
+                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Submissions</p>
+                                 <p className="text-sm font-bold text-slate-700">{form.submissionCount}</p>
+                              </div>
+                           </div>
+                           {form.deadline && (
+                              <div className="flex items-center gap-2">
+                                 <div className="w-8 h-8 rounded-xl bg-orange-50 text-orange-500 flex items-center justify-center border border-orange-100">
+                                    <Clock className="w-4 h-4" />
+                                 </div>
+                                 <div>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Deadline</p>
+                                    <p className="text-sm font-bold text-slate-700">{new Date(form.deadline).toLocaleDateString("en-IN")}</p>
+                                 </div>
+                              </div>
+                           )}
+                           <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center border border-slate-100">
+                                 <Building2 className="w-4 h-4" />
+                              </div>
+                              <div>
+                                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Program</p>
+                                 <p className="text-sm font-bold text-slate-700 truncate max-w-[120px]">{form.programName ?? `#${form.programId}`}</p>
+                              </div>
+                           </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-col gap-2 shrink-0">
+                         <Button variant="ghost" size="icon" className="rounded-2xl hover:bg-red-50 hover:text-red-600 transition-all" onClick={() => setDeleteConfirmId(form.id)}>
+                            <Trash2 className="w-4 h-4" />
+                         </Button>
+                         <Switch checked={form.isActive} onCheckedChange={(v) => toggleActive.mutate({ id: form.id, isActive: v })} className="data-[state=checked]:bg-emerald-500" />
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap shrink-0">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs text-muted-foreground">Active</Label>
-                      <Switch checked={form.isActive}
-                        onCheckedChange={(v) => toggleActive.mutate({ id: form.id, isActive: v })} />
-                    </div>
-                    <Button variant="outline" size="sm" className="gap-1" onClick={() => {
-                      setEditForm(form);
-                      setEditCustomFields(form.customFields ?? []);
-                      setEditSectionsConfig(form.sectionsConfig ?? []);
-                    }}>
-                      <Settings2 className="h-3.5 w-3.5" /> Configure
-                    </Button>
-                    <Button variant="outline" size="sm" className="gap-1" onClick={() => setViewFormId(form.id)}>
-                      <Eye className="h-4 w-4" /> Submissions <ChevronRight className="h-3 w-3" />
-                    </Button>
-                    <Button variant="outline" size="sm" className="gap-1 text-destructive hover:text-destructive"
-                      onClick={() => setDeleteConfirmId(form.id)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                  
+                  <div className="bg-slate-50/80 px-8 py-5 border-t border-slate-100 flex items-center justify-between gap-4">
+                     <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <div className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 flex items-center gap-2 truncate">
+                           <Link2 className="w-3 h-3 text-slate-400 shrink-0" />
+                           <code className="text-[10px] font-bold text-slate-600 truncate">{buildFormLink(form.token)}</code>
+                        </div>
+                        <Button variant="ghost" size="sm" className="rounded-xl h-8 text-[10px] font-black uppercase tracking-widest hover:bg-slate-200" onClick={() => copyLink(form)}>
+                           {copiedId === form.id ? <Check className="w-3 h-3 mr-1.5" /> : <Copy className="w-3 h-3 mr-1.5" />}
+                           {copiedId === form.id ? "Copied" : "Copy"}
+                        </Button>
+                     </div>
+                     <div className="flex items-center gap-2 shrink-0">
+                        <Button variant="outline" size="sm" className="rounded-xl h-9 border-slate-200 font-bold px-4" onClick={() => {
+                          setEditForm(form);
+                          setEditCustomFields(form.customFields ?? []);
+                          setEditSectionsConfig(form.sectionsConfig ?? []);
+                        }}>
+                           <Settings2 className="w-4 h-4 mr-2 text-slate-500" /> Config
+                        </Button>
+                        <Button size="sm" className="rounded-xl h-9 bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 shadow-lg shadow-slate-200" onClick={() => setViewFormId(form.id)}>
+                           Submissions <ChevronRight className="w-3.5 h-3.5 ml-1.5" />
+                        </Button>
+                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </motion.div>
           ))}
         </div>
       )}
 
       {/* Create Dialog */}
-      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setCreateCustomFields([]); setCreateFormData({ programId: "", title: "", description: "", deadline: "", customToken: "" }); } }}>
+      <Dialog open={createOpen} onOpenChange={(o) => { setCreateOpen(o); if (!o) { setCreateCustomFields([]); setCreateFormData({ programId: "", title: "", description: "", deadline: "", loadDefaults: true, customToken: "" }); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Create Application Form</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1322,15 +1698,15 @@ export default function ApplicationFormsPage() {
             </div>
 
             <Separator />
-            
+
             <div className="space-y-2 bg-blue-50/50 dark:bg-blue-950/20 p-3 rounded-lg border border-blue-100 dark:border-blue-900/50 text-sm">
               <div className="flex items-center justify-between">
                 <p className="font-semibold text-blue-800 dark:text-blue-300">Standard Fellowship Template</p>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-blue-600 font-bold uppercase">Include?</span>
-                  <Switch 
-                    checked={createFormData.loadDefaults} 
-                    onCheckedChange={(v) => setCreateFormData(f => ({ ...f, loadDefaults: v }))} 
+                  <Switch
+                    checked={createFormData.loadDefaults}
+                    onCheckedChange={(v) => setCreateFormData(f => ({ ...f, loadDefaults: v }))}
                   />
                 </div>
               </div>
@@ -1413,7 +1789,7 @@ export default function ApplicationFormsPage() {
       </Dialog>
 
       {/* Edit / Configure Dialog */}
-      <Dialog open={editForm !== null} onOpenChange={(o) => { if (!o) { setEditForm(null); setEditCustomFields([]); setGoogleFormsConfig({ googleFormId: "", serviceAccountJson: "" }); } }}>
+      <Dialog open={editForm !== null} onOpenChange={(o) => { if (!o) { setEditForm(null); setEditCustomFields([]); setGoogleSheetsConfig({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" }); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Configure Form — {editForm?.title}</DialogTitle></DialogHeader>
           {editForm && (
@@ -1489,14 +1865,14 @@ export default function ApplicationFormsPage() {
                     <p className="text-xs text-muted-foreground mt-0.5">Enable/disable or rename built-in form sections and fields</p>
                   </div>
                   {editSectionsConfig.length === 0 && (
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
+                    <Button
+                      size="sm"
+                      variant="outline"
                       className="gap-1.5 h-8 text-blue-600 border-blue-200 hover:bg-blue-50"
                       onClick={async () => {
                         try {
-                          const res = await api.get("/application-forms/default-sections");
-                          setEditSectionsConfig(res.data);
+                          const res = await api.get<any[]>("/application-forms/default-sections");
+                          setEditSectionsConfig(res);
                           toast({ title: "Template loaded" });
                         } catch (e) {
                           toast({ title: "Failed to load template", variant: "destructive" });
@@ -1557,8 +1933,8 @@ export default function ApplicationFormsPage() {
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-2">
                                     <Label className="text-[10px] font-bold text-muted-foreground uppercase">Field Label</Label>
-                                    <Select 
-                                      value={field.type} 
+                                    <Select
+                                      value={field.type}
                                       onValueChange={(v) => {
                                         const newCfg = [...editSectionsConfig];
                                         newCfg[sIdx].fields[fIdx].type = v;
@@ -1585,9 +1961,9 @@ export default function ApplicationFormsPage() {
                                       </SelectContent>
                                     </Select>
                                   </div>
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm" 
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
                                     className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-600 transition-opacity"
                                     onClick={() => {
                                       const newCfg = [...editSectionsConfig];
@@ -1670,9 +2046,9 @@ export default function ApplicationFormsPage() {
                               </div>
                             </div>
                           ))}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             className="w-full h-8 border-dashed border-2 text-[10px] uppercase tracking-wider font-bold gap-2"
                             onClick={() => {
                               const newCfg = [...editSectionsConfig];

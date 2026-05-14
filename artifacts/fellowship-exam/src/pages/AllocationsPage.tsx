@@ -57,7 +57,7 @@ function numberToWords(num: number): string {
 
   if ((num = num.toString()).length > 9) return 'overflow';
   let n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-  if (!n) return ''; 
+  if (!n) return '';
   let str = '';
   str += (Number(n[1]) != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
   str += (Number(n[2]) != 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'Lakh ' : '';
@@ -80,7 +80,7 @@ export default function AllocationsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [specFilter, setSpecFilter] = useState("all");
   const [previewCandidate, setPreviewCandidate] = useState<any | null>(null);
-  
+
   // Offer Details Form State
   const [sendingCandidate, setSendingCandidate] = useState<any | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("default");
@@ -135,25 +135,25 @@ export default function AllocationsPage() {
         parsedCenterPreference: (() => {
           try {
             return typeof c.centerPreference === 'string' ? JSON.parse(c.centerPreference) : c.centerPreference || {};
-          } catch(e) { return {}; }
+          } catch (e) { return {}; }
         })()
       };
     })
     .sort((a: any, b: any) => (b.totalScore || 0) - (a.totalScore || 0));
 
   const filtered = scoredCandidates.filter(c => {
-    const matchSearch = c.fullName.toLowerCase().includes(search.toLowerCase()) || 
-                       c.candidateCode.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = c.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      c.candidateCode.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || c.status === statusFilter;
     const isAllocated = c.status === 'allocated';
     const allocatedSpec = isAllocated ? c.reviewNotes?.replace('Allocated to ', '').split(' [')[0] : null;
     const matchSpec = specFilter === "all" || (isAllocated && allocatedSpec === specFilter);
-    
+
     return matchSearch && matchStatus && matchSpec;
   });
 
   const allocationMutation = useMutation({
-    mutationFn: ({ id, specialization }: { id: number, specialization: string }) => 
+    mutationFn: ({ id, specialization }: { id: number, specialization: string }) =>
       api.patch(`/candidates/${id}`, { status: 'allocated', reviewNotes: `Allocated to ${specialization}` }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["candidates"] });
@@ -224,7 +224,7 @@ export default function AllocationsPage() {
       }
     });
     if (plan.length > 0 && confirm(`Auto-allocate ${plan.length} candidates?`)) {
-       // Batch update logic
+      // Batch update logic
     }
   };
 
@@ -253,7 +253,7 @@ export default function AllocationsPage() {
           <Button onClick={handleAutoAllocate} variant="default" className="gap-2 bg-slate-900 font-black uppercase text-[10px] h-10 px-6">
             <Trophy className="h-4 w-4 text-amber-400" /> Smart Allocate
           </Button>
-          <Button onClick={() => {}} variant="outline" className="gap-2 text-slate-900 bg-white font-black uppercase text-[10px] h-10 border-slate-300">
+          <Button onClick={() => { }} variant="outline" className="gap-2 text-slate-900 bg-white font-black uppercase text-[10px] h-10 border-slate-300">
             <Download className="h-4 w-4" /> Export Batch
           </Button>
         </div>
@@ -343,17 +343,17 @@ export default function AllocationsPage() {
                     <TableCell className="text-right">
                       {isAllocated ? (
                         <div className="flex justify-end gap-1.5">
-                           <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200" onClick={() => setPreviewCandidate({ ...c, allocatedSpec })} title="Preview">
-                             <FileText className="h-4 w-4 text-slate-400" />
-                           </Button>
-                           {c.submissionId && (
-                             <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200 text-blue-600" onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")} title="Print Application Form">
-                               <Printer className="h-4 w-4" />
-                             </Button>
-                           )}
-                           <Button 
-                            size="sm" 
-                            variant="default" 
+                          <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200" onClick={() => setPreviewCandidate({ ...c, allocatedSpec })} title="Preview">
+                            <FileText className="h-4 w-4 text-slate-400" />
+                          </Button>
+                          {c.submissionId && (
+                            <Button size="sm" variant="outline" className="h-8 w-8 p-0 border-slate-200 text-blue-600" onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")} title="Print Application Form">
+                              <Printer className="h-4 w-4" />
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="default"
                             className="h-8 gap-2 text-[10px] font-black uppercase tracking-widest bg-slate-900"
                             onClick={() => {
                               const progId = scoredCandidates.find(x => x.id === c.id)?.programId;
@@ -379,23 +379,23 @@ export default function AllocationsPage() {
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 border-none bg-white">
           <div className="bg-slate-900 p-6 text-white sticky top-0 z-20 flex justify-between items-center">
             <div className="flex items-center gap-3">
-               <div className="h-10 w-10 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30">
-                  <FileText className="h-5 w-5 text-primary" />
-               </div>
-               <div>
-                  <h2 className="font-black uppercase tracking-widest text-sm">Document Generation Suite</h2>
-                  <p className="text-[9px] font-bold text-slate-400 uppercase">Configuring for Dr. {sendingCandidate?.fullName}</p>
-               </div>
+              <div className="h-10 w-10 bg-primary/20 rounded-xl flex items-center justify-center border border-primary/30">
+                <FileText className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <h2 className="font-black uppercase tracking-widest text-sm">Document Generation Suite</h2>
+                <p className="text-[9px] font-bold text-slate-400 uppercase">Configuring for Dr. {sendingCandidate?.fullName}</p>
+              </div>
             </div>
             <Button variant="ghost" onClick={() => setSendingCandidate(null)} className="text-slate-400 hover:text-white"><X className="h-5 w-5" /></Button>
           </div>
-          
+
           <div className="p-8 space-y-8">
             {/* Step 1: Template Selection */}
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                 <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">1</Badge>
-                 Select Letter Template
+                <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">1</Badge>
+                Select Letter Template
               </div>
               <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
                 <SelectTrigger className="h-12 font-black uppercase tracking-tighter text-sm border-2">
@@ -412,26 +412,26 @@ export default function AllocationsPage() {
 
             {/* Step 2: Content Details */}
             <div className="space-y-4 pt-4 border-t border-slate-100">
-               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                 <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">2</Badge>
-                 Content Variables
+              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">2</Badge>
+                Content Variables
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Interview Date</Label>
-                  <Input value={offerDetails.interview_date} onChange={e => setOfferDetails({...offerDetails, interview_date: e.target.value})} className="font-bold h-9 text-xs" />
+                  <Input value={offerDetails.interview_date} onChange={e => setOfferDetails({ ...offerDetails, interview_date: e.target.value })} className="font-bold h-9 text-xs" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Start Date</Label>
-                  <Input value={offerDetails.start_date} onChange={e => setOfferDetails({...offerDetails, start_date: e.target.value})} className="font-bold h-9 text-xs" />
+                  <Input value={offerDetails.start_date} onChange={e => setOfferDetails({ ...offerDetails, start_date: e.target.value })} className="font-bold h-9 text-xs" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Reporting Date</Label>
-                  <Input value={offerDetails.reporting_date} onChange={e => setOfferDetails({...offerDetails, reporting_date: e.target.value})} className="font-bold h-9 text-xs" />
+                  <Input value={offerDetails.reporting_date} onChange={e => setOfferDetails({ ...offerDetails, reporting_date: e.target.value })} className="font-bold h-9 text-xs" />
                 </div>
                 <div className="space-y-2 col-span-2">
                   <Label className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Induction Program Dates</Label>
-                  <Input value={offerDetails.induction_dates} onChange={e => setOfferDetails({...offerDetails, induction_dates: e.target.value})} className="font-bold h-9 text-xs" />
+                  <Input value={offerDetails.induction_dates} onChange={e => setOfferDetails({ ...offerDetails, induction_dates: e.target.value })} className="font-bold h-9 text-xs" />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[9px] font-black uppercase text-slate-500 tracking-widest">Monthly Stipend</Label>
@@ -442,36 +442,36 @@ export default function AllocationsPage() {
 
             {/* Step 3: Custom Tags */}
             <div className="space-y-4 pt-4 border-t border-slate-100">
-               <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">3</Badge>
-                    Advanced Custom Tags
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  <Badge className="h-5 w-5 rounded-full p-0 flex items-center justify-center bg-slate-100 text-slate-500">3</Badge>
+                  Advanced Custom Tags
+                </div>
+                <Button variant="ghost" size="sm" onClick={addCustomField} className="h-6 text-[9px] font-black uppercase text-primary gap-1">
+                  <Plus className="h-3 w-3" /> New Tag
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                {customFields.map((field, idx) => (
+                  <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <Input placeholder="Tag Key" value={field.key} onChange={(e) => updateCustomField(idx, 'key', e.target.value)} className="h-8 text-[9px] font-black border-none bg-transparent" />
+                    <Input placeholder="Value" value={field.value} onChange={(e) => updateCustomField(idx, 'value', e.target.value)} className="h-8 text-[9px] font-bold border-none bg-transparent" />
+                    <Button size="sm" variant="ghost" onClick={() => removeCustomField(idx)} className="h-6 w-6 p-0 text-rose-500"><X className="h-3 w-3" /></Button>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={addCustomField} className="h-6 text-[9px] font-black uppercase text-primary gap-1">
-                    <Plus className="h-3 w-3" /> New Tag
-                  </Button>
-               </div>
-               <div className="grid grid-cols-2 gap-3">
-                  {customFields.map((field, idx) => (
-                    <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2 rounded-lg border border-slate-100">
-                       <Input placeholder="Tag Key" value={field.key} onChange={(e) => updateCustomField(idx, 'key', e.target.value)} className="h-8 text-[9px] font-black border-none bg-transparent" />
-                       <Input placeholder="Value" value={field.value} onChange={(e) => updateCustomField(idx, 'value', e.target.value)} className="h-8 text-[9px] font-bold border-none bg-transparent" />
-                       <Button size="sm" variant="ghost" onClick={() => removeCustomField(idx)} className="h-6 w-6 p-0 text-rose-500"><X className="h-3 w-3" /></Button>
-                    </div>
-                  ))}
-               </div>
+                ))}
+              </div>
             </div>
           </div>
 
           <div className="bg-slate-50 p-8 border-t border-slate-200 grid grid-cols-2 gap-4">
-             <Button variant="outline" onClick={handleDownload} disabled={downloadMutation.isPending} className="h-12 font-black uppercase tracking-widest text-xs gap-2 border-slate-300">
-                {downloadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                Download PDF Manually
-             </Button>
-             <Button onClick={handleSend} disabled={sendOfferMutation.isPending} className="h-12 font-black uppercase tracking-widest text-xs gap-2 bg-primary">
-                {sendOfferMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                Dispatch via Email
-             </Button>
+            <Button variant="outline" onClick={handleDownload} disabled={downloadMutation.isPending} className="h-12 font-black uppercase tracking-widest text-xs gap-2 border-slate-300">
+              {downloadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Download PDF Manually
+            </Button>
+            <Button onClick={handleSend} disabled={sendOfferMutation.isPending} className="h-12 font-black uppercase tracking-widest text-xs gap-2 bg-primary">
+              {sendOfferMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              Dispatch via Email
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -479,29 +479,29 @@ export default function AllocationsPage() {
       {/* Preview Dialog */}
       <Dialog open={!!previewCandidate} onOpenChange={() => setPreviewCandidate(null)}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0 border-none bg-slate-200">
-           <div className="p-12">
-              <div className="bg-white shadow-2xl mx-auto max-w-[800px] min-h-[1000px] p-16 font-serif relative">
-                 <div className="flex justify-between border-b-4 border-primary/20 pb-8 mb-12">
-                    <div className="h-20 w-40 bg-slate-100 rounded-xl flex items-center justify-center text-[10px] font-black uppercase text-slate-300 italic">Hospital Logo</div>
-                    <div className="h-20 w-40 bg-slate-100 rounded-xl flex items-center justify-center text-[10px] font-black uppercase text-slate-300 italic">Academy Logo</div>
-                 </div>
-                 <div className="space-y-6 text-slate-800">
-                    <p className="text-right font-black uppercase tracking-widest text-xs text-slate-400">JULY 2026 ADMISSION CYCLE</p>
-                    <div className="space-y-1">
-                       <p className="font-black text-2xl text-slate-900 uppercase tracking-tighter">DR. {previewCandidate?.fullName}</p>
-                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">{previewCandidate?.candidateCode} • {previewCandidate?.address}</p>
-                    </div>
-                    <div className="h-1 w-20 bg-primary/30 rounded-full" />
-                    <h2 className="text-center font-black underline text-2xl py-8 tracking-tight">SUB: FELLOWSHIP ALLOCATION OFFER</h2>
-                    <p className="text-base leading-relaxed">This refers to your merit-based interview for the Fellowship program at Sankara Academy of Vision.</p>
-                    <p className="text-base leading-relaxed">We are pleased to inform you that you have been allocated to the <strong>{previewCandidate?.allocatedSpec}</strong> specialization at our <strong>{previewCandidate?.unitName}</strong> unit.</p>
-                    
-                    <div className="py-20 text-center border-2 border-dashed rounded-3xl border-slate-100 mt-12 bg-slate-50/50">
-                       <p className="font-black uppercase tracking-widest text-slate-300 text-xs italic">The formal document is generated via Google Docs API</p>
-                    </div>
-                 </div>
+          <div className="p-12">
+            <div className="bg-white shadow-2xl mx-auto max-w-[800px] min-h-[1000px] p-16 font-serif relative">
+              <div className="flex justify-between border-b-4 border-primary/20 pb-8 mb-12">
+                <div className="h-20 w-40 bg-slate-100 rounded-xl flex items-center justify-center text-[10px] font-black uppercase text-slate-300 italic">Hospital Logo</div>
+                <div className="h-20 w-40 bg-slate-100 rounded-xl flex items-center justify-center text-[10px] font-black uppercase text-slate-300 italic">Academy Logo</div>
               </div>
-           </div>
+              <div className="space-y-6 text-slate-800">
+                <p className="text-right font-black uppercase tracking-widest text-xs text-slate-400">JULY 2026 ADMISSION CYCLE</p>
+                <div className="space-y-1">
+                  <p className="font-black text-2xl text-slate-900 uppercase tracking-tighter">DR. {previewCandidate?.fullName}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">{previewCandidate?.candidateCode} • {previewCandidate?.address}</p>
+                </div>
+                <div className="h-1 w-20 bg-primary/30 rounded-full" />
+                <h2 className="text-center font-black underline text-2xl py-8 tracking-tight">SUB: FELLOWSHIP ALLOCATION OFFER</h2>
+                <p className="text-base leading-relaxed">This refers to your merit-based interview for the Fellowship program at Sankara Academy of Vision.</p>
+                <p className="text-base leading-relaxed">We are pleased to inform you that you have been allocated to the <strong>{previewCandidate?.allocatedSpec}</strong> specialization at our <strong>{previewCandidate?.unitName}</strong> unit.</p>
+
+                <div className="py-20 text-center border-2 border-dashed rounded-3xl border-slate-100 mt-12 bg-slate-50/50">
+                  <p className="font-black uppercase tracking-widest text-slate-300 text-xs italic">The formal document is generated via Google Docs API</p>
+                </div>
+              </div>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -40,6 +40,7 @@ import {
   ArrowRight,
   MoreVertical,
   Trash2,
+  Building2,
 } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 import { api } from "../lib/api";

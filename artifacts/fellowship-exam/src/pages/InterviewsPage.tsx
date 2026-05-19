@@ -26,7 +26,7 @@ interface Candidate { id: number; candidateCode: string; fullName: string; statu
 
 interface ScoreEntry {
   id: number; candidateId: number; candidateName: string; candidateCode: string;
-  doctorId: number; doctorName: string; score: number; remarks: string | null; submittedAt: string;
+  doctorId: number; doctorName: string; score: number; remarks: string | null; submittedAt: string; totalMarks?: number;
 }
 
 interface DoctorAssignment {

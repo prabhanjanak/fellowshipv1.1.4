@@ -1059,7 +1059,7 @@ export default function AllocationsPage() {
                           </div>
                           <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">
                             <p className="text-[9px] font-black text-slate-400 uppercase mb-2">Preferred Location</p>
-                            <p className="font-black text-slate-900 uppercase text-sm">{Object.values(dossierCandidate.parsedCenterPreference || {})?.[0] || "Institutional"}</p>
+                             <p className="font-black text-slate-900 uppercase text-sm">{String(Object.values(dossierCandidate.parsedCenterPreference || {})?.[0] || "Institutional")}</p>
                           </div>
                         </div>
                         <div className="p-6 rounded-3xl bg-slate-50 border border-slate-100">

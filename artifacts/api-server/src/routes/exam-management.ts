@@ -25,9 +25,15 @@ router.get("/batches", requireAuth, async (req: any, res) => {
 router.post("/batches", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req: any, res) => {
   try {
     const [batch] = await db.insert(batchesTable).values({
-      ...req.body,
+      name: String(req.body.name || ""),
+      segment: req.body.segment ? String(req.body.segment) : null,
       date: new Date(req.body.date),
-      venue: req.body.venue || "SEH, Bangalore",
+      timing: String(req.body.timing || ""),
+      venue: req.body.venue ? String(req.body.venue) : "SEH, Bangalore",
+      programId: Number(req.body.programId),
+      mcqTotalMarks: Number(req.body.mcqTotalMarks) || 50,
+      psychometricTotalMarks: Number(req.body.psychometricTotalMarks) || 50,
+      interviewTotalMarks: Number(req.body.interviewTotalMarks) || 100,
       isMock: req.isMockMode || false,
     }).returning();
     res.json(batch);

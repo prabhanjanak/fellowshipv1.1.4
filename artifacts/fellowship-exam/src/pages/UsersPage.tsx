@@ -183,14 +183,14 @@ export default function UsersPage() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "System Admins", value: users.filter(u => u.role.includes('admin')).length, icon: ShieldCheck, color: "orange" },
-          { label: "Unit Coordinators", value: users.filter(u => u.role === 'unit_coordinator').length, icon: Building2, color: "orange" },
-          { label: "Medical Faculty", value: users.filter(u => u.role === 'doctor').length, icon: BadgeCheck, color: "emerald" },
-          { label: "Active Fellows", value: users.filter(u => u.role === 'student').length, icon: UserPlus, color: "amber" },
+          { label: "System Admins", value: users.filter(u => u.role.includes('admin')).length, icon: ShieldCheck, colorClasses: "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400" },
+          { label: "Unit Coordinators", value: users.filter(u => u.role === 'unit_coordinator').length, icon: Building2, colorClasses: "bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400" },
+          { label: "Medical Faculty", value: users.filter(u => u.role === 'doctor').length, icon: BadgeCheck, colorClasses: "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400" },
+          { label: "Active Fellows", value: users.filter(u => u.role === 'student').length, icon: UserPlus, colorClasses: "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400" },
         ].map((s, i) => (
           <Card key={i} className="border-none shadow-sm bg-white dark:bg-zinc-900">
             <CardContent className="p-4 flex items-center gap-4">
-              <div className={`h-11 w-11 rounded-2xl bg-${s.color}-50 dark:bg-${s.color}-900/20 flex items-center justify-center text-${s.color}-600 dark:text-${s.color}-400 shadow-inner`}>
+              <div className={`h-11 w-11 rounded-2xl ${s.colorClasses} flex items-center justify-center shadow-inner`}>
                 <s.icon className="h-5 w-5" />
               </div>
               <div>
@@ -276,7 +276,7 @@ export default function UsersPage() {
                       </div>
                       <div className="space-y-1">
                          <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Designation</p>
-                         <p className="text-[11px] font-black text-slate-500 uppercase tracking-tight truncate max-w-[150px]">{u.designation || "—"}</p>
+                         <p className="text-[11px] font-black text-slate-500 uppercase tracking-tight break-words">{u.designation || "—"}</p>
                       </div>
                    </div>
 

@@ -239,6 +239,7 @@ export default function BatchesPage() {
                       <div className="space-y-2">
                         <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Academic Program</Label>
                         <select name="programId" className="w-full h-14 rounded-2xl border-2 border-slate-100 bg-white px-4 text-sm font-bold uppercase focus:border-primary/20 transition-all outline-none" required>
+                          <option value="">Select Program</option>
                           {programs.map((p: any) => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                           ))}

@@ -78,22 +78,22 @@ function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; co
   const filtered = navItems.filter((item) => item.roles.includes(user.role));
 
   return (
-    <div className="flex flex-col h-full bg-[#0a1b33]">
-      {/* Logo Section */}
-      <div className={cn("p-5 border-b border-white/10", collapsed && "px-2 py-4")}>
+    <div className="flex flex-col h-full">
+      {/* Logo */}
+      <div className={cn("p-4 border-b border-sidebar-border", collapsed && "px-2")}>
         <div className="flex items-center gap-3">
-          <img src={logoUrl} alt="SAV" className="h-10 w-10 rounded-xl object-contain bg-white p-1.5 flex-shrink-0 shadow-md ring-2 ring-white/10" />
+          <img src={logoUrl} alt="SAV" className="h-10 w-10 rounded-lg object-contain bg-white p-1 flex-shrink-0" />
           {!collapsed && (
             <div className="min-w-0">
-              <p className="text-xs font-bold text-white tracking-wider leading-tight truncate uppercase">Sankara Academy</p>
-              <p className="text-[10px] text-white/50 tracking-widest truncate uppercase font-semibold">of Vision</p>
+              <p className="text-xs font-bold text-sidebar-foreground leading-tight truncate">Sankara Academy</p>
+              <p className="text-[10px] text-sidebar-foreground/60 truncate">of Vision</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* Nav Section */}
-      <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto fancy-scrollbar">
+      {/* Nav */}
+      <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto custom-scrollbar">
         {filtered.map((item) => {
           const isActive = item.href === "/" ? location === "/" : location.startsWith(item.href);
           return (
@@ -101,34 +101,28 @@ function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; co
               <div 
                 title={collapsed ? item.label : undefined}
                 className={cn(
-                  "flex items-center gap-3 px-3.5 py-3 rounded-xl text-[13px] font-semibold transition-all duration-300 cursor-pointer group relative overflow-hidden",
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer group",
                   isActive
-                    ? "bg-gradient-to-r from-[#ff7a00] to-[#e06600] text-white shadow-lg shadow-[#ff7a00]/25 scale-[1.02]"
-                    : "text-white/75 hover:text-white hover:bg-gradient-to-r hover:from-[#ff7a00] hover:to-[#ff9f43] hover:shadow-md hover:shadow-[#ff7a00]/15 hover:scale-[1.02] active:scale-[0.98]",
-                  collapsed && "px-2 justify-center rounded-xl"
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  collapsed && "px-2 justify-center"
                 )}
               >
-                <item.icon className={cn("h-4.5 w-4.5 flex-shrink-0 transition-all duration-300", 
-                  isActive ? "text-white scale-110 rotate-[6deg]" : "text-white/55 group-hover:text-white group-hover:scale-115 group-hover:rotate-[6deg]"
-                )} />
-                {!collapsed && (
-                  <span className="flex-1 truncate transition-transform duration-300 group-hover:translate-x-1 tracking-wide">
-                    {item.label}
-                  </span>
-                )}
-                {!collapsed && isActive && <ChevronRight className="h-3.5 w-3.5 text-white/90 animate-pulse" />}
+                <item.icon className={cn("h-4 w-4 flex-shrink-0", isActive ? "text-inherit" : "text-sidebar-foreground/50 group-hover:text-inherit")} />
+                {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+                {!collapsed && isActive && <ChevronRight className="h-3 w-3 opacity-70" />}
               </div>
             </Link>
           );
         })}
       </nav>
 
-      {/* Bottom Profile Section */}
-      <div className={cn("p-3.5 border-t border-white/10 space-y-1.5 bg-[#081528]/85", collapsed && "px-2")}>
+      {/* Bottom */}
+      <div className={cn("p-3 border-t border-sidebar-border space-y-1", collapsed && "px-2")}>
         {!collapsed && (
-          <div className="px-3.5 py-3 rounded-xl bg-white/5 border border-white/5 mb-2 shadow-inner">
-            <p className="text-xs font-bold text-white tracking-wide truncate">{user.fullName}</p>
-            <p className="text-[10px] text-[#ff7a00] font-black truncate tracking-wider uppercase mt-1">{roleLabel[user.role] ?? user.role}</p>
+          <div className="px-3 py-2">
+            <p className="text-xs font-semibold text-sidebar-foreground truncate">{user.fullName}</p>
+            <p className="text-[10px] text-sidebar-primary truncate">{roleLabel[user.role] ?? user.role}</p>
           </div>
         )}
 
@@ -136,15 +130,15 @@ function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; co
           <div 
             title={collapsed ? "My Profile" : undefined}
             className={cn(
-              "flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 cursor-pointer",
+              "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer",
               location === "/profile"
-                ? "bg-gradient-to-r from-[#ff7a00] to-[#e06600] text-white shadow-lg"
-                : "text-white/75 hover:text-white hover:bg-gradient-to-r hover:from-[#ff7a00] hover:to-[#ff9f43] hover:shadow-md",
-              collapsed && "px-2 justify-center rounded-xl"
+                ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+              collapsed && "px-2 justify-center"
             )}
           >
-            <UserCircle className="h-4.5 w-4.5 flex-shrink-0 transition-transform duration-300 group-hover:scale-110" />
-            {!collapsed && <span className="flex-1 tracking-wide">My Profile</span>}
+            <UserCircle className="h-4 w-4 flex-shrink-0" />
+            {!collapsed && <span className="flex-1">My Profile</span>}
           </div>
         </Link>
 
@@ -153,12 +147,12 @@ function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; co
           size="sm"
           title={collapsed ? (theme === "dark" ? "Light Mode" : "Dark Mode") : undefined}
           className={cn(
-            "w-full justify-start text-white/70 hover:bg-white/5 hover:text-white gap-2.5 h-9 text-xs font-medium",
+            "w-full justify-start text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground gap-2",
             collapsed && "px-2 justify-center"
           )}
           onClick={toggleTheme}
         >
-          {theme === "dark" ? <Sun className="h-4 w-4 text-[#ff7a00]" /> : <Moon className="h-4 w-4 text-white/55" />}
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           {!collapsed && (theme === "dark" ? "Light Mode" : "Dark Mode")}
         </Button>
 
@@ -167,7 +161,7 @@ function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; co
           size="sm"
           title={collapsed ? "Sign Out" : undefined}
           className={cn(
-            "w-full justify-start text-white/60 hover:text-red-400 hover:bg-red-500/10 gap-2.5 h-9 text-xs font-medium",
+            "w-full justify-start text-sidebar-foreground/70 hover:text-red-400 hover:bg-red-400/10 gap-2",
             collapsed && "px-2 justify-center"
           )}
           onClick={logout}
@@ -196,7 +190,7 @@ export default function AppSidebar() {
     <>
       <aside
         className={cn(
-          "hidden md:flex flex-col h-screen bg-sidebar border-r border-sidebar-border transition-all duration-300 relative group/sidebar",
+          "hidden md:flex flex-col min-h-screen bg-sidebar border-r border-sidebar-border transition-all duration-300 relative group/sidebar",
           collapsed ? "w-16" : "w-64"
         )}
       >
@@ -248,4 +242,3 @@ export default function AppSidebar() {
     </>
   );
 }
-

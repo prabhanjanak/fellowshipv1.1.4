@@ -256,24 +256,7 @@ export default function DashboardPage() {
                        <span className="text-amber-400">High Efficiency</span>
                     </div>
                  </div>
-                 <Button 
-                   onClick={async () => {
-                     try {
-                       const blob = await api.getBlob("/reports/cycle-report");
-                       const url = window.URL.createObjectURL(blob);
-                       const link = document.createElement("a");
-                       link.href = url;
-                       link.setAttribute("download", `Full_Cycle_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
-                       document.body.appendChild(link);
-                       link.click();
-                       link.remove();
-                       window.URL.revokeObjectURL(url);
-                     } catch (error) {
-                       toast({ title: "Download Failed", description: "Could not generate cycle report", variant: "destructive" });
-                     }
-                   }}
-                   className="w-full h-14 rounded-2xl bg-white text-slate-900 font-black uppercase tracking-widest text-[11px] hover:bg-slate-50 shadow-2xl"
-                 >
+                 <Button className="w-full h-14 rounded-2xl bg-white text-slate-900 font-black uppercase tracking-widest text-[11px] hover:bg-slate-50 shadow-2xl">
                     Download Cycle Report
                  </Button>
               </div>

@@ -102,7 +102,7 @@ function ParticleCanvas({ className }: { className?: string }) {
   );
 }
 
-export default function ApplyPage({ token }: { token: string }) {
+export default function ApplyPage({ token, isManualEntry }: { token: string; isManualEntry?: boolean }) {
   const [formInfo, setFormInfo] = useState<any>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -290,8 +290,20 @@ export default function ApplyPage({ token }: { token: string }) {
         if (!putRes.ok) throw new Error(`Failed to upload ${field}`);
 
         uploadedUrls[field] = objectPath;
+        uploadedUrls[field] = objectPath;
       }
       const finalForm = { ...form, ...uploadedUrls };
+
+      if (isManualEntry) {
+         setPaymentVerified({
+           paymentId: finalForm.paymentUTR || ("MANUAL_ENTRY_" + Date.now()),
+           finalForm: { ...finalForm, paymentMode: "Manual Offline", paidAmount: 0 },
+           verifyResponse: { success: true }
+         });
+         window.scrollTo(0, 0);
+         setSubmitting(false);
+         return;
+      }
 
       // 2. Create Order
       const specCount = Array.isArray(form.specialization) ? form.specialization.length : 1;
@@ -370,7 +382,7 @@ export default function ApplyPage({ token }: { token: string }) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f8fafc]">
-        <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#000080]" />
       </div>
     );
   }
@@ -378,11 +390,11 @@ export default function ApplyPage({ token }: { token: string }) {
   if (formError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] p-4">
-        <Card className="max-w-md w-full text-center p-8 border-orange-100 shadow-xl shadow-orange-900/5">
-          <AlertCircle className="w-16 h-16 text-orange-600 mx-auto mb-4" />
+        <Card className="max-w-md w-full text-center p-8 border-slate-200 shadow-md">
+          <AlertCircle className="w-16 h-16 text-[#000080] mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Application Unavailable</h2>
           <p className="text-slate-600 mb-6">{formError}</p>
-          <Button onClick={() => window.location.reload()} className="bg-orange-600 hover:bg-orange-700">
+          <Button onClick={() => window.location.reload()} className="bg-[#000080] hover:bg-blue-900">
             Try Again
           </Button>
         </Card>
@@ -429,25 +441,25 @@ export default function ApplyPage({ token }: { token: string }) {
             </div>
             <h2 className="text-2xl font-bold text-green-800 mb-1">Payment Successful!</h2>
             <p className="text-sm text-green-700">
-              Your payment of <strong>{paymentConfig ? `${paymentConfig.currency} ${((paymentConfig.amount * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)) / 100).toLocaleString("en-IN")}` : `Rs. ${(2750 * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)).toLocaleString("en-IN")}`}</strong> has been verified by Razorpay.
-              {Array.isArray(finalForm.specialization) && finalForm.specialization.length > 1 && ` (Rs. 2,750 x ${finalForm.specialization.length} specializations)`}
+              Your payment of <strong>{isManualEntry ? "Rs. 0 (Manual Entry)" : (paymentConfig ? `${paymentConfig.currency} ${((paymentConfig.amount * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)) / 100).toLocaleString("en-IN")}` : `Rs. ${(2750 * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)).toLocaleString("en-IN")}`)}</strong> has been verified by Razorpay.
+              {!isManualEntry && Array.isArray(finalForm.specialization) && finalForm.specialization.length > 1 && ` (Rs. 2,750 x ${finalForm.specialization.length} specializations)`}
             </p>
           </div>
 
           <div className="bg-white border-2 border-orange-200 rounded-2xl p-6 shadow-md">
             <div className="flex items-center gap-2 mb-3">
-              <CreditCard className="w-5 h-5 text-orange-600" />
-              <span className="text-sm font-bold text-orange-900 uppercase tracking-wider">Your Razorpay Payment ID</span>
+              <CreditCard className="w-5 h-5 text-[#000080]" />
+              <span className="text-sm font-bold text-blue-900 uppercase tracking-wider">Your Razorpay Payment ID</span>
             </div>
             <div className="bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 flex items-center justify-between gap-3 mb-4">
               <code className="text-lg font-mono font-bold text-orange-700 tracking-wider select-all">{paymentId}</code>
               <button
                 onClick={() => { navigator.clipboard.writeText(paymentId); }}
-                className="text-xs bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg font-semibold transition-all"
+                className="text-xs bg-[#000080] hover:bg-blue-900 text-white px-3 py-1.5 rounded-lg font-semibold transition-all"
               >Copy</button>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
-              ⚠️ <strong>Save this Payment ID</strong> — you will need it for any future correspondence or refund requests. It was also shown inside the Razorpay popup.
+              ⚠️ <strong>Save this Payment ID</strong> — you will need it for any future correspondence or refund requests. {isManualEntry ? "This is a system-generated ID for manual entries." : "It was also shown inside the Razorpay popup."}
             </p>
           </div>
 
@@ -480,8 +492,8 @@ export default function ApplyPage({ token }: { token: string }) {
             animate={{ scale: 1, opacity: 1 }}
             className="max-w-2xl w-full"
           >
-            <Card className="border-none shadow-3xl overflow-hidden glass-card">
-              <div className="medical-gradient p-10 text-white text-center relative overflow-hidden">
+            <Card className="border-none shadow-xl overflow-hidden ">
+              <div className="bg-[#000080] p-10 text-white text-center relative">
                 <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
                    <div className="absolute -top-24 -left-24 w-64 h-64 bg-white rounded-full blur-3xl"></div>
                    <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-400 rounded-full blur-3xl"></div>
@@ -490,18 +502,18 @@ export default function ApplyPage({ token }: { token: string }) {
                   <div className="w-24 h-24 bg-white/20 backdrop-blur-xl rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl border border-white/30">
                     <CheckCircle2 className="w-12 h-12 text-white" />
                   </div>
-                  <h2 className="text-3xl font-black mb-3 tracking-tight">Application Submitted!</h2>
+                  <h2 className="text-2xl font-bold mb-3 text-slate-800">Application Submitted!</h2>
                   <p className="text-emerald-50/80 font-medium max-w-md mx-auto">Your application for the {formInfo.programName} has been received successfully.</p>
                 </div>
               </div>
-              <CardContent className="p-10 space-y-8 bg-white/50 backdrop-blur-sm">
+              <CardContent className="p-10 space-y-8 bg-white">
                 <div className="grid grid-cols-2 gap-6">
                    <div className="space-y-1">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Application Reference</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Application Reference</p>
                       <p className="text-lg font-mono font-bold text-slate-800">#{submissionId}</p>
                    </div>
                    <div className="space-y-1 text-right">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Submitted On</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Submitted On</p>
                       <p className="text-lg font-bold text-slate-800">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                    </div>
                 </div>
@@ -535,16 +547,27 @@ export default function ApplyPage({ token }: { token: string }) {
       );
    }
 
-  const sections = formInfo.sectionsConfig || [];
+    const sections = formInfo.sectionsConfig ? [...formInfo.sectionsConfig] : [];
+  if (isManualEntry && sections.length > 0 && sections[sections.length - 1].id !== 'manual_payment') {
+      sections.push({
+          id: 'manual_payment',
+          title: "Administrative Manual Payment",
+          description: "Enter offline payment details for this candidate.",
+          fields: [
+              { id: "paymentUTR", type: "text", label: "Payment Reference / UTR Number", required: true },
+              { id: "paymentUrl", type: "file", label: "Payment Screenshot", required: true }
+          ]
+      });
+  }
   const currentSection = sections[step];
   if (!currentSection) {
      return (
         <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] p-4">
           <Card className="max-w-md w-full text-center p-8 border-orange-100 shadow-xl">
-            <AlertCircle className="w-16 h-16 text-orange-600 mx-auto mb-4" />
+            <AlertCircle className="w-16 h-16 text-[#000080] mx-auto mb-4" />
             <h2 className="text-2xl font-bold text-slate-900 mb-2">Form Configuration Missing</h2>
             <p className="text-slate-600 mb-6">This application form has no sections configured yet. Please contact the administrator.</p>
-            <Button onClick={() => window.location.href = "/"} className="bg-orange-600 hover:bg-orange-700">
+            <Button onClick={() => window.location.href = "/"} className="bg-[#000080] hover:bg-blue-900">
               Go to Homepage
             </Button>
           </Card>
@@ -554,24 +577,24 @@ export default function ApplyPage({ token }: { token: string }) {
   const progress = ((step + 1) / sections.length) * 100;
 
   return (
-    <div className="min-h-screen bg-[#f1f5f9] pb-20 font-sans relative">
-      <ParticleCanvas className="opacity-40" />
+    <div className="min-h-screen bg-slate-50 pb-20 font-sans">
       
-      <div className="glass-header border-none shadow-sm bg-white/80 backdrop-blur-xl border-b border-white/50 sticky top-0 z-50">
+      
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
         <div className="max-w-4xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white shadow-lg shadow-orange-500/20">
+              <div className="w-12 h-12 rounded-xl bg-[#000080] flex items-center justify-center text-white rounded-lg">
                  <img src={logoUrl} alt="Logo" className="h-8 w-8 object-contain invert" />
               </div>
               <div>
-                <h1 className="text-lg font-black text-slate-900 leading-none">{formInfo.title}</h1>
+                <h1 className="text-lg font-bold text-slate-900 leading-none">{formInfo.title}</h1>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Application Process</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
                <div className="text-right hidden sm:block">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Progress</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Progress</p>
                   <p className="text-sm font-bold text-slate-900">{step + 1} / {sections.length} Steps</p>
                </div>
             </div>
@@ -582,7 +605,7 @@ export default function ApplyPage({ token }: { token: string }) {
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
               transition={{ duration: 0.5 }}
-              className="h-full bg-gradient-to-r from-orange-500 to-red-500" 
+              className="h-full bg-[#ea580c]" 
             />
           </div>
         </div>
@@ -597,10 +620,10 @@ export default function ApplyPage({ token }: { token: string }) {
             exit={{ y: -20, opacity: 0 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
-            <Card className="border-none shadow-2xl rounded-3xl overflow-hidden glass-card">
+            <Card className="border-none shadow-2xl rounded-3xl overflow-hidden ">
               <div className="bg-white px-8 py-10 border-b border-slate-100">
                 <div className="flex items-center gap-3 mb-3">
-                   <h2 className="text-2xl font-black text-slate-900 tracking-tight">{currentSection.title}</h2>
+                   <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{currentSection.title}</h2>
                 </div>
                 {currentSection.description && (
                   <div 
@@ -630,20 +653,20 @@ export default function ApplyPage({ token }: { token: string }) {
                    {field.type !== 'info' && field.type !== 'heading' && field.type !== 'static_text' && (
                      <Label className="text-sm font-bold text-slate-700 flex items-center gap-1">
                        {field.label}
-                       {field.required && <span className="text-orange-600">*</span>}
+                       {field.required && <span className="text-[#000080]">*</span>}
                      </Label>
                    )}
 
                   {field.type === 'info' && (
-                      <div className="bg-orange-50 border-l-4 border-orange-500 p-6 rounded-r-xl shadow-sm">
+                      <div className="bg-blue-50 border-l-4 border-[#000080] p-6 rounded-r-xl shadow-sm">
                          <div className="flex items-start gap-4">
                            <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
-                             <CreditCard className="w-5 h-5 text-orange-600" />
+                             <CreditCard className="w-5 h-5 text-[#000080]" />
                            </div>
                            <div>
-                             <h4 className="text-sm font-bold text-orange-900 uppercase tracking-wider mb-1">{field.label || "Instruction"}</h4>
+                             <h4 className="text-sm font-bold text-blue-900 uppercase tracking-wider mb-1">{field.label || "Instruction"}</h4>
                              <div 
-                               className="text-sm text-orange-800 leading-relaxed font-medium prose prose-sm max-w-none prose-orange"
+                               className="text-sm text-blue-800 leading-relaxed font-medium prose prose-sm max-w-none prose-blue"
                                dangerouslySetInnerHTML={{ __html: field.defaultValue || "" }}
                              />
                            </div>
@@ -693,7 +716,7 @@ export default function ApplyPage({ token }: { token: string }) {
                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
                          set(field.id, val);
                        }}
-                       className={`flex-1 px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none font-medium tracking-wider`}
+                       className={`flex-1 px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none font-medium tracking-wider`}
                        placeholder="10 digit mobile number"
                      />
                    </div>
@@ -704,7 +727,7 @@ export default function ApplyPage({ token }: { token: string }) {
                      type="text"
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                      placeholder={field.placeholder || field.label}
                    />
                  )}
@@ -714,7 +737,7 @@ export default function ApplyPage({ token }: { token: string }) {
                      type="email"
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                      placeholder={field.placeholder || "example@domain.com"}
                    />
                  )}
@@ -724,7 +747,7 @@ export default function ApplyPage({ token }: { token: string }) {
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
                      rows={4}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                      placeholder={field.label}
                    />
                  )}
@@ -733,7 +756,7 @@ export default function ApplyPage({ token }: { token: string }) {
                    <select
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none bg-white`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none bg-white`}
                    >
                      <option value="">Select Option</option>
                      {field.options.map((opt: string) => (
@@ -745,13 +768,13 @@ export default function ApplyPage({ token }: { token: string }) {
                  {field.type === 'radio' && (
                    <div className="flex flex-wrap gap-4">
                      {field.options.map((opt: string) => (
-                       <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all ${form[field.id] === opt ? 'border-orange-600 bg-orange-50 text-orange-700 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-white'}`}>
+                       <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all ${form[field.id] === opt ? 'border-[#000080] bg-blue-50 text-[#000080]' : 'border-slate-200 hover:border-slate-300 bg-white'}`}>
                          <input
                            type="radio"
                            name={field.id}
                            checked={form[field.id] === opt}
                            onChange={() => set(field.id, opt)}
-                           className="w-4 h-4 text-orange-600 border-slate-300 focus:ring-orange-500"
+                           className="w-4 h-4 text-[#000080] border-slate-300 focus:ring-[#000080]"
                          />
                          <span className="text-sm font-medium">{opt}</span>
                        </label>
@@ -764,7 +787,7 @@ export default function ApplyPage({ token }: { token: string }) {
                      type="date"
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                    />
                  )}
 
@@ -773,7 +796,7 @@ export default function ApplyPage({ token }: { token: string }) {
                      type="time"
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                    />
                  )}
 
@@ -783,7 +806,7 @@ export default function ApplyPage({ token }: { token: string }) {
                         type="checkbox"
                         checked={!!form[field.id]}
                         onChange={(e) => set(field.id, e.target.checked)}
-                        className="mt-1 w-5 h-5 rounded text-orange-600 border-slate-300 focus:ring-orange-500"
+                        className="mt-1 w-5 h-5 rounded text-[#000080] border-slate-300 focus:ring-[#000080]"
                       />
                       <span className="text-sm text-slate-600 group-hover:text-slate-900 transition-colors leading-relaxed">
                         {field.label}
@@ -794,7 +817,7 @@ export default function ApplyPage({ token }: { token: string }) {
                  {field.type === 'checkbox_group' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {field.options.map((opt: string) => (
-                        <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all ${form[field.id]?.includes(opt) ? 'border-orange-600 bg-orange-50' : 'border-slate-100 hover:border-slate-200'}`}>
+                        <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all ${form[field.id]?.includes(opt) ? 'border-[#000080] bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}>
                           <input
                             type="checkbox"
                             checked={form[field.id]?.includes(opt)}
@@ -812,7 +835,7 @@ export default function ApplyPage({ token }: { token: string }) {
                                }
                                set(field.id, current);
                             }}
-                            className="w-5 h-5 rounded text-orange-600 border-slate-300 focus:ring-orange-500"
+                            className="w-5 h-5 rounded text-[#000080] border-slate-300 focus:ring-[#000080]"
                           />
                           <span className="text-sm font-medium text-slate-700">{opt}</span>
                         </label>
@@ -821,7 +844,7 @@ export default function ApplyPage({ token }: { token: string }) {
                  )}
 
                  {field.type === 'file' && (
-                    <div className={`relative border-2 border-dashed rounded-xl p-8 transition-all ${files[field.id] ? 'border-green-400 bg-green-50/30' : errors[field.id] ? 'border-red-300 bg-red-50/30' : 'border-slate-200 hover:border-orange-400 bg-slate-50/30'}`}>
+                    <div className={`relative border-2 border-dashed rounded-xl p-8 transition-all ${files[field.id] ? 'border-green-400 bg-green-50/30' : errors[field.id] ? 'border-red-300 bg-red-50/30' : 'border-slate-200 hover:border-[#000080] bg-slate-50/30'}`}>
                       <input
                         type="file"
                         onChange={(e) => onFileChange(field.id, e.target.files?.[0] || null)}
@@ -875,7 +898,7 @@ export default function ApplyPage({ token }: { token: string }) {
                                       const current = form[field.id] || {};
                                       set(field.id, { ...current, [row]: opt });
                                     }}
-                                    className="w-4 h-4 text-orange-600"
+                                    className="w-4 h-4 text-[#000080]"
                                   />
                                 </td>
                               ))}
@@ -911,7 +934,7 @@ export default function ApplyPage({ token }: { token: string }) {
                                        const current = form[field.id] || {};
                                        set(field.id, { ...current, [q]: v });
                                     }}
-                                    className="w-4 h-4 text-orange-600"
+                                    className="w-4 h-4 text-[#000080]"
                                   />
                                 </td>
                               ))}
@@ -947,7 +970,7 @@ export default function ApplyPage({ token }: { token: string }) {
                                       const rowData = current[row] || {};
                                       set(field.id, { ...current, [row]: { ...rowData, supervision: parseInt(e.target.value) || 0 } });
                                     }}
-                                    className="w-full px-3 py-2 text-center rounded-lg border border-slate-200 focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all font-medium"
+                                    className="w-full px-3 py-2 text-center rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] outline-none transition-all font-medium"
                                     placeholder="0"
                                   />
                                 </td>
@@ -978,7 +1001,7 @@ export default function ApplyPage({ token }: { token: string }) {
                       type="number"
                       value={form[field.id] || ""}
                       onChange={(e) => set(field.id, e.target.value)}
-                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all outline-none`}
+                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
                       placeholder="0"
                     />
                  )}
@@ -997,15 +1020,15 @@ export default function ApplyPage({ token }: { token: string }) {
                  <div className="flex items-center justify-between">
                    <div className="flex items-center gap-3">
                      <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
-                       <CreditCard className="w-5 h-5 text-orange-600" />
+                       <CreditCard className="w-5 h-5 text-[#000080]" />
                      </div>
                      <div>
-                       <p className="text-xs font-bold text-orange-800 uppercase tracking-wider">Total Amount to Pay</p>
-                       <p className="text-[10px] text-orange-600">Rs. 2,750 x {Array.isArray(form.specialization) ? form.specialization.length : 1} Specialization{Array.isArray(form.specialization) && form.specialization.length > 1 ? 's' : ''}</p>
+                       <p className="text-xs font-bold text-blue-800 uppercase tracking-wider">Total Amount to Pay</p>
+                       <p className="text-[10px] text-[#000080]">Rs. 2,750 x {Array.isArray(form.specialization) ? form.specialization.length : 1} Specialization{Array.isArray(form.specialization) && form.specialization.length > 1 ? 's' : ''}</p>
                      </div>
                    </div>
                    <div className="text-right">
-                     <span className="text-2xl font-black text-orange-900">
+                     <span className="text-2xl font-bold text-blue-900">
                        Rs. {(2750 * (Array.isArray(form.specialization) ? form.specialization.length : 1)).toLocaleString("en-IN")}
                      </span>
                    </div>
@@ -1034,7 +1057,7 @@ export default function ApplyPage({ token }: { token: string }) {
             <Button 
               onClick={next} 
               disabled={submitting}
-              className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-6 rounded-xl flex items-center gap-2 text-lg font-bold transition-all shadow-lg shadow-orange-200 active:scale-95"
+              className="bg-[#000080] hover:bg-blue-900 text-white px-8 py-6 rounded-xl flex items-center gap-2 text-lg font-bold transition-all shadow-lg shadow-orange-200 active:scale-95"
             >
               {submitting ? (
                 <>
@@ -1054,7 +1077,7 @@ export default function ApplyPage({ token }: { token: string }) {
                <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
                  Your progress is <strong>automatically saved</strong>. You can close this window and return later to continue where you left off. 
                  <br />
-                 <span className="text-orange-600">Note: Applications cannot be modified after final submission.</span>
+                 <span className="text-[#000080]">Note: Applications cannot be modified after final submission.</span>
                </p>
              </div>
           </div>
@@ -1065,3 +1088,6 @@ export default function ApplyPage({ token }: { token: string }) {
 </div>
 );
 }
+
+
+

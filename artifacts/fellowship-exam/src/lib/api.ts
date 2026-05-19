@@ -4,6 +4,7 @@ export type Role =
   | "super_admin"
   | "program_admin"
   | "central_exam_coordinator"
+  | "exam_coordinator"
   | "unit_coordinator"
   | "doctor"
   | "student";

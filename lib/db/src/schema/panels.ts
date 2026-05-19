@@ -34,6 +34,16 @@ export const panelQueueTable = pgTable("panel_queue", {
   unq: unique().on(t.panelId, t.candidateId),
 }));
 
+export const doctorPanelStatusTable = pgTable("doctor_panel_status", {
+  id: serial("id").primaryKey(),
+  doctorId: integer("doctor_id").notNull().unique().references(() => usersTable.id),
+  isEngaged: boolean("is_engaged").notNull().default(false),
+  engagedSince: timestamp("engaged_since", { withTimezone: true }),
+  currentCandidateId: integer("current_candidate_id").references(() => candidatesTable.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type InterviewPanel = typeof interviewPanelsTable.$inferSelect;
 export type InterviewPanelMember = typeof interviewPanelMembersTable.$inferSelect;
 export type PanelQueueEntry = typeof panelQueueTable.$inferSelect;
+export type DoctorPanelStatus = typeof doctorPanelStatusTable.$inferSelect;

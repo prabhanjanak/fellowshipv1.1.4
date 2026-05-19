@@ -23,6 +23,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "../hooks/use-toast";
+import QRCode from "react-qr-code";
 
 interface CustomField {
   id: string;
@@ -70,14 +71,45 @@ interface Submission {
 }
 interface Program { id: number; name: string; }
 
-/** Parse specialization field — may be a JSON array or plain comma-separated string */
+/** Parse specialization field — may be a JSON array, PostgreSQL array or plain comma-separated string */
 function parseSpecializations(spec: string | null | undefined): string[] {
   if (!spec) return [];
+  let s = spec.trim();
+  
+  // Handle PostgreSQL curly-brace array format: {"Cornea", "Phaco Refractive"}
+  if (s.startsWith("{") && s.endsWith("}")) {
+    s = s.substring(1, s.length - 1);
+    const list: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < s.length; i++) {
+      const char = s[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        list.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim() || list.length > 0) {
+      list.push(current.trim());
+    }
+    return list.map(item => {
+      let cleaned = item;
+      if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+        cleaned = cleaned.substring(1, cleaned.length - 1);
+      }
+      return cleaned.trim();
+    }).filter(Boolean);
+  }
+
   try {
-    const parsed: unknown = JSON.parse(spec);
+    const parsed: unknown = JSON.parse(s);
     if (Array.isArray(parsed)) return (parsed as unknown[]).map(String).filter(Boolean);
   } catch { /* not JSON */ }
-  return spec.split(",").map((s) => s.trim()).filter(Boolean);
+  return s.split(",").map((x) => x.trim()).filter(Boolean);
 }
 
 /** Parse center preference field — may be JSON or needs fallback to customAnswers */
@@ -497,15 +529,18 @@ function DocValue({ label, url }: { label: string; url: string | null }) {
   // Object storage path — fetch with auth and show inline
   if (url.startsWith("/objects/")) {
     const isPhoto = label.toLowerCase().includes("photo");
+    const isLor = label.toLowerCase().includes("lor") || label.toLowerCase().includes("recommendation");
+    const verifyUrl = typeof window !== 'undefined' ? (window.location.origin + "/verify-lor?path=" + encodeURIComponent(url)) : "";
+
     return (
       <div className="w-full mt-1 space-y-1.5">
         <div className="flex items-center gap-2 flex-wrap">
-          <Button size="sm" variant="outline" className="h-6 text-xs px-2 gap-1" onClick={toggle} disabled={loading}>
+          <Button size="sm" variant="outline" className="h-6 text-xs px-2 gap-1 no-print" onClick={toggle} disabled={loading}>
             {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : isPhoto ? <ImageIcon className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
             {expanded ? "Hide" : "View"} {label}
           </Button>
           <button
-            className="text-xs text-primary hover:underline flex items-center gap-0.5"
+            className="text-xs text-primary hover:underline flex items-center gap-0.5 no-print"
             onClick={() => fetchAndOpen(false)}
             disabled={loading}
           >
@@ -523,6 +558,22 @@ function DocValue({ label, url }: { label: string; url: string | null }) {
             style={{ height: 380 }}
             title={label}
           />
+        )}
+        {isLor && verifyUrl && (
+          <div className="mt-3 p-3 bg-slate-50 border border-slate-150 rounded-2xl flex flex-col md:flex-row gap-4 items-center print:bg-white print:border-none print:p-0 print:mt-2 print:gap-2">
+            <div className="flex-1 space-y-1 text-center md:text-left print:hidden">
+              <p className="text-xs font-black text-slate-800 flex items-center gap-1.5 justify-center md:justify-start">
+                <CheckCircle className="w-3.5 h-3.5 text-[#0b4a8f]" />
+                Access-Secured LOR QR
+              </p>
+              <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+                Scan this code to verify authenticity. Access requires an authorized admin login.
+              </p>
+            </div>
+            <div className="p-2 bg-white border border-slate-200 rounded-xl shadow-sm flex-shrink-0 print:shadow-none print:border-slate-350 print:p-1">
+              <QRCode value={verifyUrl} size={90} className="w-[90px] h-[90px] print:w-[80px] print:h-[80px]" />
+            </div>
+          </div>
         )}
       </div>
     );
@@ -784,6 +835,8 @@ export default function ApplicationFormsPage() {
   const [createCustomFields, setCreateCustomFields] = useState<CustomField[]>([]);
   const [editCustomFields, setEditCustomFields] = useState<CustomField[]>([]);
   const [editSectionsConfig, setEditSectionsConfig] = useState<any[]>([]);
+  const [photoBlobUrl, setPhotoBlobUrl] = useState<string | null>(null);
+  const [specFilter, setSpecFilter] = useState<string>("all");
 
   // Google Sheets integration state (per edit dialog + success dialog)
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" });
@@ -1067,6 +1120,86 @@ export default function ApplicationFormsPage() {
   const viewedSub = submissions.find((s) => s.id === viewSubId);
   const viewedForm = forms.find((f) => f.id === viewFormId);
 
+  // Convert any image URL/Blob into a standard scannable and printable JPG data url!
+  const convertToJpg = (srcUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/jpeg", 0.9));
+        } else {
+          resolve(srcUrl);
+        }
+      };
+      img.onerror = () => {
+        resolve(srcUrl);
+      };
+      img.src = srcUrl;
+    });
+  };
+
+  useEffect(() => {
+    let active = true;
+    let localUrl: string | null = null;
+
+    if (viewedSub?.photoUrl) {
+      if (viewedSub.photoUrl.startsWith("/objects/")) {
+        const token = localStorage.getItem("fellowship_token");
+        const servingUrl = `/api/storage${viewedSub.photoUrl}`;
+        fetch(servingUrl, {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+          .then(res => {
+            if (!res.ok) throw new Error();
+            return res.blob();
+          })
+          .then(blob => {
+            if (active) {
+              const url = URL.createObjectURL(blob);
+              localUrl = url;
+              convertToJpg(url).then(jpgDataUrl => {
+                if (active) {
+                  setPhotoBlobUrl(jpgDataUrl);
+                }
+              }).catch(() => {
+                if (active) {
+                  setPhotoBlobUrl(url);
+                }
+              });
+            }
+          })
+          .catch(() => {
+            if (active) setPhotoBlobUrl(null);
+          });
+      } else if (viewedSub.photoUrl.startsWith("http://") || viewedSub.photoUrl.startsWith("https://")) {
+        convertToJpg(viewedSub.photoUrl).then(jpgDataUrl => {
+          if (active) setPhotoBlobUrl(jpgDataUrl);
+        }).catch(() => {
+          if (active) setPhotoBlobUrl(viewedSub.photoUrl);
+        });
+      } else {
+        setPhotoBlobUrl(null);
+      }
+    } else {
+      setPhotoBlobUrl(null);
+    }
+
+    return () => {
+      active = false;
+      if (localUrl) {
+        URL.revokeObjectURL(localUrl);
+      }
+    };
+  }, [viewedSub?.photoUrl]);
+
   const addCustomField = (fields: CustomField[], setFields: (f: CustomField[]) => void) => {
     setFields([...fields, { id: genId(), label: "", type: "text", required: false }]);
   };
@@ -1112,17 +1245,155 @@ export default function ApplicationFormsPage() {
     });
   };
 
+  // Helper to format center preferences as a string matching specialities
+  const formatCenterPreferences = () => {
+    if (!viewedSub) return "";
+    const prefs = parseCenterPreferences(viewedSub.centerPreference, viewedSub.formData, viewedForm?.sectionsConfig);
+    const entries = Object.entries(prefs).map(([specName, loc]) => `${specName}: ${loc}`);
+    if (entries.length === 0) {
+      return viewedSub.centerPreference ? cleanArrayValue(viewedSub.centerPreference) : "";
+    }
+    return entries.join(", ");
+  };
+
+  const cleanArrayValue = (val: string): string => {
+    if (!val) return "";
+    const trimmed = val.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      return parseSpecializations(trimmed).join(", ");
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.join(", ");
+    } catch { /* not JSON */ }
+    return val;
+  };
+
+  // Extract all standard and dynamic fields into a compact list of key-value pairs
+  const getCompactPrintFields = () => {
+    if (!viewedSub || !viewedForm) return [];
+    const fields: { label: string; value: string }[] = [];
+    
+    // Core demographic details
+    if (viewedSub.dateOfBirth) fields.push({ label: "Date of Birth", value: new Date(viewedSub.dateOfBirth).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) });
+    if (viewedSub.maritalStatus) fields.push({ label: "Marital Status", value: viewedSub.maritalStatus });
+    if (viewedSub.phone) fields.push({ label: "Contact Number", value: viewedSub.phone });
+    if (viewedSub.centerPreference) fields.push({ label: "Center Preference", value: formatCenterPreferences() });
+    
+    // Read dynamic non-file fields
+    for (const s of viewedForm.sectionsConfig || []) {
+      for (const f of s.fields) {
+        if (f.type !== "file" && f.type !== "info" && f.type !== "heading" && f.type !== "static_text") {
+          const val = f.isStandard && f.mapping ? viewedSub[f.mapping] : viewedSub.formData?.[f.id];
+          if (val && typeof val !== "object" && String(val).trim() !== "") {
+            const cleanedVal = cleanArrayValue(String(val));
+            if (!fields.some(item => item.label.toLowerCase() === f.label.toLowerCase())) {
+              fields.push({ label: f.label, value: cleanedVal });
+            }
+          }
+        }
+      }
+    }
+    return fields;
+  };
+
+  const getPrintLorFields = () => {
+    if (!viewedSub || !viewedForm) return [];
+    const list: { label: string; value: string }[] = [];
+    for (const s of viewedForm.sectionsConfig || []) {
+      for (const f of s.fields) {
+        if (f.type === "file") {
+          const isLor = f.label.toLowerCase().includes("lor") || f.label.toLowerCase().includes("recommendation");
+          if (isLor) {
+            const val = f.isStandard && f.mapping ? viewedSub[f.mapping] : viewedSub.formData?.[f.id];
+            if (val && String(val) !== "nil" && String(val) !== "null") {
+              if (!list.some(item => item.value === String(val))) {
+                list.push({ label: f.label, value: String(val) });
+              }
+            }
+          }
+        }
+      }
+    }
+    return list;
+  };
+
   // Submission detail view
   if (viewFormId !== null && viewSubId !== null && viewedSub) {
     return (
       <motion.div 
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex flex-col no-print"
+        className="detail-overlay fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex flex-col print:relative print:inset-auto print:bg-white print:z-0 print:h-auto print:overflow-visible"
       >
-        <div className="flex-1 flex flex-col bg-slate-50/50">
+        <style dangerouslySetInnerHTML={{ __html: `
+          @media print {
+            /* Force A4 dimensions and tight margins for 1-page layout */
+            @page { margin: 0.8cm; size: A4 portrait; }
+            body, html, #root { 
+               background: white !important; 
+               margin: 0 !important; 
+               padding: 0 !important; 
+               width: 100% !important;
+               height: 100% !important;
+               overflow: hidden !important;
+            }
+            
+            /* Remove all overflow restrictions that truncate pages */
+            * {
+               overflow: visible !important;
+            }
+            
+            aside, .md\\:hidden, .main-sidebar, .main-header, .no-print { display: none !important; }
+            .flex.h-screen, .flex.h-screen > main {
+               display: block !important;
+               height: auto !important;
+               overflow: visible !important;
+               position: static !important;
+            }
+            
+            /* Make the overlay cover everything and flow naturally */
+            .detail-overlay { 
+               position: absolute !important; 
+               top: 0 !important;
+               left: 0 !important;
+               background: white !important; 
+               height: 100% !important; 
+               width: 100% !important;
+               display: block !important;
+               margin: 0 !important;
+               padding: 0 !important;
+               z-index: 9999 !important;
+            }
+            
+            table {
+               table-layout: fixed !important;
+               width: 100% !important;
+               max-width: 100% !important;
+               word-wrap: break-word !important;
+               page-break-inside: avoid;
+            }
+            td, th {
+               word-break: break-word !important;
+               white-space: normal !important;
+            }
+            
+            /* Ensure UI elements like cards break nicely */
+            .card, .glass-card {
+               break-inside: avoid;
+               box-shadow: none !important;
+               border: 1px solid #e2e8f0 !important;
+            }
+            
+            * { 
+               -webkit-print-color-adjust: exact !important; 
+               print-color-adjust: exact !important; 
+            }
+          }
+        `}} />
+        <div className="flex-1 flex flex-col bg-slate-50/50 print:bg-white print:h-auto print:overflow-visible">
           {/* Glass Header */}
-          <div className="glass-header px-8 py-5 flex items-center justify-between border-b border-slate-200 bg-white/90 backdrop-blur-xl">
+          <div className="glass-header px-8 py-5 flex items-center justify-between border-b border-slate-200 bg-white/90 backdrop-blur-xl no-print">
             <div className="flex items-center gap-5">
                <Button 
                  variant="ghost" 
@@ -1167,8 +1438,76 @@ export default function ApplicationFormsPage() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-auto p-8 fancy-scrollbar">
-            <AnimatePresence mode="wait">
+          <div className="flex-1 overflow-auto p-8 fancy-scrollbar print:overflow-visible print:h-auto print:p-0">
+             {/* Formal Print Header Title */}
+             <div className="hidden print:flex items-start justify-between border-b-2 border-[#0b4a8f] pb-4 mb-6">
+                <div className="space-y-0.5">
+                   <h1 className="text-3xl font-black uppercase tracking-tight text-[#0b4a8f]">Sankara Academy of Vision</h1>
+                   <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Fellowship Application Record</p>
+                </div>
+                <div className="text-right">
+                   <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 text-right">Date Printed</p>
+                   <p className="text-xs font-bold text-slate-950 text-right">{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                </div>
+             </div>
+
+             {/* Candidate Details & Photo Placement (Below Header, Photo on the Right) */}
+             <div className="hidden print:grid grid-cols-12 gap-6 items-start pb-6 mb-6 border-b border-slate-200">
+                <div className="col-span-8 space-y-4">
+                   <div>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-[#0b4a8f] leading-none mb-1">Applicant Registration Number</p>
+                      <p className="text-xl font-black text-slate-900 font-mono tracking-wider">{viewedSub.candidateCode || "PENDING"}</p>
+                   </div>
+                   <div className="grid grid-cols-2 gap-4">
+                      <div>
+                         <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">Full Name of Applicant</p>
+                         <p className="text-sm font-black text-slate-900">{viewedSub.fullName}</p>
+                      </div>
+                      <div>
+                         <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1">E-Mail Address</p>
+                         <p className="text-sm font-semibold text-slate-700 break-all">{viewedSub.email}</p>
+                      </div>
+                   </div>
+                   <div>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none mb-1.5">Specialization Applied For</p>
+                      <div className="flex flex-wrap gap-1.5">
+                         {(() => {
+                            const centerPrefs = parseCenterPreferences(viewedSub.centerPreference, viewedSub.formData, viewedForm?.sectionsConfig);
+                            return parseSpecializations(viewedSub.specialization).map((spec, idx) => {
+                               const matchKey = Object.keys(centerPrefs).find(k => 
+                                  k.toLowerCase().trim() === spec.toLowerCase().trim() ||
+                                  spec.toLowerCase().trim().includes(k.toLowerCase().trim()) ||
+                                  k.toLowerCase().trim().includes(spec.toLowerCase().trim())
+                               );
+                               const loc = matchKey ? centerPrefs[matchKey] : "";
+                               const displayName = loc ? `${spec} (${loc})` : spec;
+                               return (
+                            <span key={idx} className="text-[10px] font-black text-[#0b4a8f] bg-[#0b4a8f]/5 border border-[#0b4a8f]/10 px-2.5 py-0.5 rounded-lg shadow-sm">
+                               {displayName}
+                            </span>
+                               );
+                            });
+                         })()}
+                      </div>
+                   </div>
+                </div>
+                
+                <div className="col-span-4 flex justify-end">
+                   <div className="w-28 h-32 border-2 border-slate-300 bg-white p-1 rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden shadow-sm">
+                      {photoBlobUrl ? (
+                         <img src={photoBlobUrl} alt="Candidate Photo" className="w-full h-full object-cover rounded" />
+                      ) : (
+                         <div className="w-full h-full bg-slate-50 flex flex-col items-center justify-center text-center p-2 rounded">
+                            <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Passport size</span>
+                            <span className="text-[9px] text-slate-400 font-black uppercase tracking-wider">Photograph</span>
+                         </div>
+                      )}
+                   </div>
+                </div>
+             </div>
+
+             <div className="no-print">
+             <AnimatePresence mode="wait">
               <motion.div
                 key={isEditingData ? 'edit' : 'view'}
                 initial={{ opacity: 0, y: 20 }}
@@ -1364,6 +1703,71 @@ export default function ApplicationFormsPage() {
                 )}
               </motion.div>
             </AnimatePresence>
+            </div>
+
+            {/* Dedicated 1-Page A4 Print View (Hidden on Screen, Visible on Print) */}
+            <div className="hidden print:block space-y-4 print:text-slate-900 mt-2">
+               {/* Academic & Personal Grid */}
+               <div className="border border-slate-350 rounded-xl overflow-hidden bg-white shadow-sm">
+                  <div className="bg-[#0b4a8f]/5 px-4 py-1.5 border-b border-slate-350">
+                     <p className="text-[10px] font-black text-[#0b4a8f] uppercase tracking-wider">I. Candidate Profile & Academic Overview</p>
+                  </div>
+                  <div className="grid grid-cols-2 divide-x divide-y divide-slate-200 text-xs">
+                     {getCompactPrintFields().map((field, idx) => (
+                        <div key={idx} className="p-2 flex items-center justify-between min-h-[36px]">
+                           <span className="font-bold text-slate-500 uppercase text-[9px] tracking-wider">{field.label}</span>
+                           <span className="font-black text-slate-800 break-all pl-2 text-right">{field.value}</span>
+                        </div>
+                     ))}
+                  </div>
+               </div>
+
+               {/* Secure Letters of Recommendation Verification (LORs side-by-side) */}
+               {getPrintLorFields().length > 0 && (
+                  <div className="grid grid-cols-2 gap-4">
+                     {getPrintLorFields().map((lor, idx) => {
+                        const verifyUrl = typeof window !== 'undefined' ? (window.location.origin + "/verify-lor?path=" + encodeURIComponent(lor.value)) : "";
+                        return (
+                           <div key={idx} className="border border-slate-350 rounded-xl p-3.5 bg-white flex items-center justify-between gap-4 shadow-sm min-h-[110px]">
+                              <div className="space-y-1">
+                                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Verified Reference</p>
+                                 <p className="text-xs font-black text-slate-900 leading-snug">{lor.label}</p>
+                                 <div className="pt-1.5 flex items-center gap-1 text-[8px] font-black text-[#0b4a8f] uppercase tracking-wider">
+                                    <span>🔒 Secure Verification QR</span>
+                                 </div>
+                                 <p className="text-[7.5px] text-slate-455 font-medium leading-tight max-w-[130px]">
+                                    Administrative review required. Scanning validates credential authenticity.
+                                 </p>
+                              </div>
+                              <div className="p-1 bg-white border border-slate-200 rounded-lg flex-shrink-0">
+                                 {verifyUrl && <QRCode value={verifyUrl} size={65} className="w-[65px] h-[65px]" />}
+                              </div>
+                           </div>
+                        );
+                     })}
+                  </div>
+               )}
+
+               {/* Print Verification Sign-off Box */}
+               <div className="border border-slate-350 rounded-xl p-4 bg-white/50 grid grid-cols-3 gap-6 items-end pt-12 mt-4">
+                  <div className="space-y-1">
+                     <div className="border-t border-slate-400 w-full pt-1.5">
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Signature of Reviewer</p>
+                     </div>
+                  </div>
+                  <div className="space-y-1 text-center">
+                     <div className="border-t border-slate-400 w-full pt-1.5">
+                        <p className="text-[9px] font-black text-[#0b4a8f] uppercase tracking-wider font-mono opacity-20">SAV OFFICIAL SEAL</p>
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Authorized Seal / Stamp</p>
+                     </div>
+                  </div>
+                  <div className="space-y-1 text-right">
+                     <div className="border-t border-slate-400 w-full pt-1.5">
+                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-wider">Date of Verification</p>
+                     </div>
+                  </div>
+               </div>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -1372,7 +1776,7 @@ export default function ApplicationFormsPage() {
 
   // Submissions list view
   if (viewFormId !== null) {
-    const [specFilter, setSpecFilter] = useState<string>("all");
+    
     
     const filteredSubs = submissions.filter((s) => {
       const statusMatch = statusFilter === "all" ? true : (statusFilter === "ready" ? s.readyForReview : s.status === statusFilter);

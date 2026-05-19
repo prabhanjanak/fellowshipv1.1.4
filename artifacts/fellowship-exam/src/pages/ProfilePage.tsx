@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
-import { KeyRound, Eye, EyeOff, CheckCircle2, Building2, BadgeCheck, Briefcase, Database, AlertTriangle } from "lucide-react";
+import { KeyRound, Eye, EyeOff, CheckCircle2, Building2, BadgeCheck, Briefcase, Database, AlertTriangle, Mail, Settings, Send, Loader2 } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 import { RoleAvatar } from "../components/RoleAvatar";
 
@@ -262,6 +262,28 @@ function MockDataToggle() {
           </Button>
           <Button 
             size="sm" 
+            variant="outline" 
+            className="border-orange-200 text-orange-700 hover:bg-orange-50 hover:text-orange-800"
+            onClick={async () => {
+              if (confirm("This will WIPE all existing programs, candidates, and forms and replace them with dummy test data. Continue?")) {
+                setLoading(true);
+                try {
+                  await api.post("/debug/seed", {});
+                  toast({ title: "Database seeded successfully" });
+                  window.location.reload();
+                } catch (err) {
+                  toast({ title: "Seed failed", description: String(err), variant: "destructive" });
+                } finally {
+                  setLoading(false);
+                }
+              }
+            }}
+            disabled={loading}
+          >
+            {loading ? "Seeding..." : "Seed Registry"}
+          </Button>
+          <Button 
+            size="sm" 
             variant={mode?.enabled ? "secondary" : "default"} 
             onClick={handleToggle}
             disabled={loading}
@@ -280,6 +302,166 @@ function MockDataToggle() {
           </div>
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+function EmailSettingsPanel() {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [settings, setSettings] = useState({
+    enabled: false,
+    host: "",
+    port: "587",
+    user: "",
+    pass: "",
+    useSsl: false,
+    fromName: "Sankara Academy of Vision",
+    fromEmail: ""
+  });
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["email-settings"],
+    queryFn: () => api.get<any>("/settings/email"),
+  });
+
+  useEffect(() => {
+    if (data) {
+      setSettings(prev => ({ ...prev, ...data }));
+    }
+  }, [data]);
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      await api.patch("/settings/email", settings);
+      toast({ title: "Email settings updated" });
+      refetch();
+    } catch (err: any) {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTest = async () => {
+    if (!testEmail) {
+      toast({ title: "Test email required", variant: "destructive" });
+      return;
+    }
+    setTesting(true);
+    try {
+      await api.post("/settings/email/test", { to: testEmail });
+      toast({ title: "Test email sent successfully" });
+    } catch (err: any) {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (isLoading) return <Card className="p-6 flex justify-center border-slate-200"><Loader2 className="h-6 w-6 animate-spin text-slate-300" /></Card>;
+
+  return (
+    <Card className="border-slate-200">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Mail className="h-5 w-5 text-primary" />
+          <div>
+            <CardTitle className="text-base">SMTP Email Configuration</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">Configure the system email server for outgoing notifications.</p>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">SMTP Host</Label>
+            <Input 
+              placeholder="smtp.gmail.com" 
+              value={settings.host} 
+              onChange={e => setSettings({...settings, host: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Port</Label>
+            <Input 
+              placeholder="587" 
+              value={settings.port} 
+              onChange={e => setSettings({...settings, port: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Username</Label>
+            <Input 
+              placeholder="admin@example.com" 
+              value={settings.user} 
+              onChange={e => setSettings({...settings, user: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Password</Label>
+            <Input 
+              type="password" 
+              placeholder="••••••••" 
+              value={settings.pass} 
+              onChange={e => setSettings({...settings, pass: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">From Name</Label>
+            <Input 
+              value={settings.fromName} 
+              onChange={e => setSettings({...settings, fromName: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">From Email</Label>
+            <Input 
+              placeholder="no-reply@sankaraeye.com" 
+              value={settings.fromEmail} 
+              onChange={e => setSettings({...settings, fromEmail: e.target.value})} 
+              className="rounded-xl"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 pt-2">
+          <input 
+            type="checkbox" 
+            id="useSsl" 
+            checked={settings.useSsl} 
+            onChange={e => setSettings({...settings, useSsl: e.target.checked})}
+            className="rounded border-slate-300 h-4 w-4 text-primary focus:ring-primary/20"
+          />
+          <Label htmlFor="useSsl" className="text-sm font-medium cursor-pointer">Use SSL/TLS Security</Label>
+        </div>
+
+        <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="flex gap-2 flex-1 max-w-sm">
+            <Input 
+              placeholder="Send test email to..." 
+              value={testEmail} 
+              onChange={e => setTestEmail(e.target.value)} 
+              className="rounded-xl text-xs"
+            />
+            <Button size="sm" variant="outline" onClick={handleTest} disabled={testing} className="rounded-xl px-3">
+              {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+          </div>
+          <Button onClick={handleSave} disabled={loading} className="gap-2 px-8 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Settings className="h-4 w-4" />}
+            Save SMTP Settings
+          </Button>
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -317,7 +499,12 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {user?.role === "super_admin" && <MockDataToggle />}
+      {user?.role === "super_admin" && (
+        <div className="space-y-6">
+          <MockDataToggle />
+          <EmailSettingsPanel />
+        </div>
+      )}
 
       {/* Staff Profile Card with Avatar */}
       {isStaff && (

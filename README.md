@@ -1,118 +1,82 @@
-# Sankara Academy of Vision: Fellowship Examination & Admission Portal (v1.0.1)
+# Fellowship Operations Admin Portal — Deployment Guide (v1.0.6)
 
-A professional, end-to-end web platform designed to completely digitize and manage the lifecycle of Fellowship programs at the **Sankara Academy of Vision**.
-
----
-
-## 🌟 Complete Project Overview
-This platform consolidates all admission operations into a unified portal:
-- **Public Candidate Portal**: Allows candidates to sign up, securely pay the application fee via Razorpay, fill out comprehensive multi-step forms, and take proctored online entrance exams.
-- **Dynamic Form Builder**: A built-in drag-and-drop form engine (similar to Google Forms) supporting Checkboxes, Dropdowns, Radio buttons, File uploads, and custom data validations.
-- **Real-Time Interview Queue (TV Portal)**: A secure, live-updating digital display board (`/tv`) intended for waiting halls. It directs candidates to available interview panels dynamically. Protected by a 6-character admin-generated access code.
-- **Smart Seat Allocation**: An intelligent allocation algorithm that maps candidates to their preferred hospital units based on their final merit ranking and category.
-- **Automated Communication**: A built-in SMTP mailer that automatically fires personalized emails for registration, interview call letters, and final admission offers.
-- **Administrative PDF Exporting**: Advanced data-table exports allowing coordinators to download a pixel-perfect, printer-friendly PDF dossier of any candidate.
-
-## 🛠️ Technology Stack
-- **Frontend**: React (Vite), TailwindCSS, Lucide Icons, Recharts (for Analytics).
-- **Backend**: Node.js (Express), TypeScript.
-- **Database**: PostgreSQL structured with Drizzle ORM.
-- **State Management**: React Query (TanStack) & Context API.
-- **Mobile**: Expo React Native mobile shell (included in `/sankara-mobile-app`).
+This repository contains the administrative portal and internal operations system for the **Sankara Academy of Vision Fellowship Program**.
 
 ---
 
-## 📦 Project Directory Structure
-- `/artifacts/fellowship-exam`: The main frontend React (Vite) application.
-- `/artifacts/api-server`: The backend Express API service.
-- `/lib/db`: Shared database schema and Drizzle configurations.
-- `/sankara-mobile-app`: Expo React Native mobile wrapper.
+## 🛠️ Step-by-Step Server Update Instructions
 
----
+To deploy this release (v1.0.6) on the production server without disrupting existing databases or data records, follow this exact sequence:
 
-## ⚙️ Environment Variables (.env)
-The environment variables must be created securely on your server. **Do not overwrite existing production variables!** Note: SMTP settings are *no longer* required in the `.env` as they are now configured directly from the admin dashboard.
+### 1. File Sync / Extraction
+1. Extract the uploaded codebase zip file into the main application directory on the server, overwriting the existing folder structure.
+2. Ensure you preserve your production `.env` files (both in the backend root and the frontend if applicable).
 
-**Backend (`artifacts/api-server/.env`):**
-```env
-DATABASE_URL=postgresql://user:password@localhost:5432/fellowship_db
-PORT=3002
-# (SMTP settings have been migrated to the Admin UI)
-```
-
-**Frontend (`artifacts/fellowship-exam/.env`):**
-```env
-VITE_API_URL=https://your-server.com/api
-```
-
----
-
-## 🔧 Admin Post-Deployment Configuration
-After deploying, the Super Admin must log into the portal to configure the following dynamic settings:
-1. **Email/SMTP Configuration**: Navigate to **Email Settings** in the sidebar. Input the Gmail/SMTP credentials here to instantly activate system-wide automated emails.
-2. **TV Dashboard Security**: Navigate to the **Dashboard** and click **TV Access Code**. Use this code to authorize public waiting hall screens.
-3. **Razorpay Payments**: Configure the API Key and Secret directly in the **Payments** tab.
-
----
-
-## 🔄 Deployment & Update Process (In-Place Update)
-
-**CRITICAL SAFEGUARD**: The update process must be executed **WITHOUT** destroying or recreating existing application data. Do not alter users, applications, or candidate data. The server deployment acts as a safe, rolling update.
-
-Follow these instructions to safely deploy updates on the live server:
-
-### Step 1: Secure Data Backup
-Before pulling updates, ensure you have backed up the PostgreSQL database and the `uploads/` directory.
+### 2. Dependency Installation
+Run the package installation from the root directory:
 ```bash
-pg_dump -U postgres -d fellowship_db > fellowship_db_backup_pre_update.sql
-tar -czvf uploads_backup.tar.gz artifacts/api-server/uploads
+pnpm install
 ```
+*(or `npm install` / `yarn install` depending on your global package manager)*
 
-### Step 2: Pull Latest Code
-Navigate to the root directory of the application and pull the latest changes from the `v1.0.1` branch or `main`.
+### 3. Safe Database Schema Synchronization
+There is **only one** database change in this release: the addition of the new **`doctor_panel_status`** table in `panels.ts`.
+
+To apply this change safely **WITHOUT touching or losing any existing tables or data**:
+1. Navigate to the database package folder on the server:
+   ```bash
+   cd lib/db
+   ```
+2. Run the safe drizzle-push command:
+   ```bash
+   pnpm run push
+   ```
+   *Drizzle ORM will analyze the diff, identify that `doctor_panel_status` is a new table, and safely create it without affecting any other candidate, exam, user, or payment records.*
+
+### 4. Build Client Applications
+1. Recompile the production frontend build:
+   ```bash
+   pnpm --filter @workspace/fellowship-exam run build
+   ```
+   *(or from `artifacts/fellowship-exam` run `npm run build`)*
+2. Compile any backend servers if you use typescript transpilation there.
+
+### 5. Server Restart
+Restart the server process (e.g., using `pm2`):
 ```bash
-git pull origin main
-```
-
-### Step 3: Install & Update Dependencies
-Navigate to both the backend and frontend folders and run NPM installs.
-```bash
-# Update backend
-cd artifacts/api-server
-npm install
-
-# Update frontend
-cd ../fellowship-exam
-npm install
-```
-
-### Step 4: Run Safe Database Migrations
-Drizzle ORM automatically handles "If Not Exists" schema setups. You can safely restart the Node server which has an auto-migration script bundled at startup (in `index.ts`). **Never run hard resets** (`npm run db:push` / `db:reset`) on the live DB.
-
-### Step 5: Build the Frontend
-Re-bundle the frontend React code for production serving.
-```bash
-cd artifacts/fellowship-exam
-npm run build
-```
-
-### Step 6: Restart Process Managers
-If using PM2, restart the services to load the updated Javascript code into memory.
-```bash
-pm2 restart fellowship-api
-pm2 restart fellowship-frontend
-```
-
-### Step 7: Verify Application Status
-1. Navigate to your live URL.
-2. Confirm the frontend loads correctly.
-3. Verify the new UI changes (Form Builder, PDF exports, TV Access Code).
-
-### Step 8: Rollback Protocol (If Required)
-If an update causes issues, revert the codebase using Git and restore the database from the backup generated in Step 1.
-```bash
-git checkout HEAD~1
 pm2 restart all
-# If database was corrupted (rare):
-psql -U postgres -d fellowship_db -f fellowship_db_backup_pre_update.sql
 ```
+
+---
+
+## 📋 Database Schema Changes in v1.0.6
+
+This release adds the following table to track active doctor engagement states:
+
+```sql
+CREATE TABLE "doctor_panel_status" (
+  "id" SERIAL PRIMARY KEY,
+  "doctor_id" INTEGER NOT NULL UNIQUE REFERENCES "users"("id"),
+  "is_engaged" BOOLEAN NOT NULL DEFAULT false,
+  "engaged_since" TIMESTAMP WITH TIME ZONE,
+  "current_candidate_id" INTEGER REFERENCES "candidates"("id"),
+  "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+```
+
+---
+
+## 💎 Features & Visual Polish in v1.0.6
+
+1. **Antigravity-Style Stardust Login**:
+   * Removed overcrowded Vanta.js net lines.
+   * Minimalist drifting cosmic particles floating behind card.
+   * Fixed 100% full screen visibility with zero scrollbars.
+2. **Attribution & Footer Updates**:
+   * Bottom Footer updated to: `Sri Kanchi Kamakoti Medical Trust, Sankara Eye Hospitals, India` and `Developed by Information Systems, Sankara Eye Hospital`.
+3. **Double Application Merging & Postgres Bracket Parsing**:
+   * Brackets `{}` and JSON formatting are automatically cleaned.
+   * Centers and specialty associations displayed correctly in reviews.
+4. **Auto-JPEG Passports & QR redirectional Gates**:
+   * Auto-conversion of broken PNG transparency to base64 JPEGs.
+   * LOR 1 & 2 secure authentication redirection portals.

@@ -7,7 +7,7 @@ import fs from "fs";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
-import { db, applicationSubmissionsTable, applicationFormsTable, programsTable } from "@workspace/db";
+import { db, applicationSubmissionsTable, applicationFormsTable, programsTable, candidatesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import PDFDocument from "pdfkit";
 import { requireAuth, requireRole } from "./middleware/auth";
@@ -49,8 +49,14 @@ app.get(
 
       const [form] = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, sub.formId));
       const [program] = form ? await db.select().from(programsTable).where(eq(programsTable.id, form.programId)) : [null];
+      
+      let candidateCode = "PENDING";
+      if (sub.email) {
+        const [candidate] = await db.select().from(candidatesTable).where(eq(candidatesTable.email, sub.email));
+        if (candidate) candidateCode = candidate.candidateCode;
+      }
 
-      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
       const filename = `Application_${sub.fullName.replace(/\s+/g, '_')}_${id}.pdf`;
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename=${filename}`);
@@ -130,6 +136,7 @@ app.get(
       doc.y = 120;
       doc.fillColor(colors.accent).font('Helvetica-Bold').fontSize(14).text('APPLICATION RECORD');
       doc.moveDown(0.5);
+      renderRow('Registration No.', candidateCode);
       renderRow('Application ID', id);
       renderRow('Program', program?.name || 'Fellowship Program');
       renderRow('Submission Date', sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString('en-GB') : '—');

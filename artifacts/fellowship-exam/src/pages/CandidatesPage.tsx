@@ -368,12 +368,16 @@ export default function CandidatesPage() {
     }
     return 0;
   });
+   const isSuperAdmin = user?.role === "super_admin";
+   const isCEC = user?.role === "central_exam_coordinator";
+   const isEC = user?.role === "exam_coordinator";
+   const canManage = isSuperAdmin || user?.role === "program_admin" || isCEC || isEC;
+   const canEnterScores = canManage;
 
-  const isSuperAdmin = user?.role === "super_admin";
-  const isCEC = user?.role === "central_exam_coordinator";
-  const isEC = user?.role === "exam_coordinator";
-  const canManage = isSuperAdmin || user?.role === "program_admin" || isCEC || isEC;
-  const canEnterScores = canManage;
+   const { data: activeForms = [] } = useQuery<any[]>({
+     queryKey: ["application-forms-active"],
+     queryFn: () => api.get("/application-forms"),
+   });
 
   const allFilteredIds = filtered.map((c) => c.id);
   const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selected.has(id));
@@ -428,24 +432,23 @@ export default function CandidatesPage() {
 
   return (
     <div className="min-h-screen bg-[#fafafa] dark:bg-black p-4 md:p-8 space-y-8 animate-in fade-in duration-700">
-      {/* Premium Header */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-orange-600 via-amber-600 to-orange-500 p-8 text-white shadow-2xl">
-        <div className="absolute right-0 top-0 h-full w-1/3 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/10 to-transparent blur-3xl" />
+      {/* Professional Header */}
+      <div className="relative overflow-hidden rounded-xl bg-[#0b4a8f] p-8 text-white shadow-sm border border-[#08386b]">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-orange-100 text-sm font-medium">
+            <div className="flex items-center gap-2 text-blue-100 text-xs font-bold uppercase tracking-wider">
               <Users className="h-4 w-4" />
               <span>Candidate Directory</span>
             </div>
-            <h1 className="text-4xl font-extrabold tracking-tight">Candidates Management</h1>
-            <p className="text-orange-100/80 max-w-md">Oversee fellowship applications, track qualification status, and manage interview schedules.</p>
+            <h1 className="text-3xl font-bold tracking-tight">Candidates Management</h1>
+            <p className="text-blue-100/90 max-w-md text-sm">Oversee fellowship applications, track qualification status, and manage interview schedules.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {canManage && selectedCount > 0 && (
               <Button 
                 variant="destructive" 
                 onClick={() => confirmDelete(allFilteredIds.filter((id) => selected.has(id)))}
-                className="rounded-2xl h-12 px-6 font-bold shadow-xl gap-2"
+                className="rounded-lg h-10 px-4 font-semibold shadow-sm gap-2"
               >
                 <Trash2 className="h-4 w-4" /> Delete ({selectedCount})
               </Button>
@@ -454,7 +457,7 @@ export default function CandidatesPage() {
               <Button 
                 variant="outline" 
                 onClick={openImportDialog}
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20 rounded-2xl h-12 px-6 font-bold shadow-xl gap-2"
+                className="bg-white/10 border-white/20 text-white hover:bg-white/20 rounded-lg h-10 px-4 font-semibold shadow-sm gap-2"
               >
                 <Upload className="h-4 w-4" /> Import Excel
               </Button>
@@ -462,10 +465,28 @@ export default function CandidatesPage() {
             {canManage && (
               <Button 
                 onClick={() => setAddOpen(true)} 
-                className="bg-white text-orange-700 hover:bg-orange-50 transition-all font-bold h-12 px-6 rounded-2xl shadow-xl hover:scale-105 active:scale-95 gap-2 border-none"
+                className="bg-[#f97316] text-white hover:bg-[#ea580c] transition-colors font-semibold h-10 px-4 rounded-lg shadow-sm gap-2 border-none"
               >
-                <UserPlus className="h-5 w-5" /> Add Candidate
+                <UserPlus className="h-4 w-4" /> Add Candidate
               </Button>
+            )}
+            {canManage && (
+              <Select onValueChange={(v) => { if (v !== "none") window.open(`/apply/${v}`, "_blank"); }}>
+                <SelectTrigger className="bg-white text-[#0b4a8f] hover:bg-slate-50 transition-colors font-semibold h-10 px-4 rounded-lg shadow-sm border border-slate-200 w-40">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4" /> Manual Entry
+                  </div>
+                </SelectTrigger>
+                <SelectContent className="rounded-2xl">
+                   <p className="px-2 py-1.5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Select Form to Fill</p>
+                   {activeForms.filter((f: any) => f.isActive).map((f: any) => (
+                     <SelectItem key={f.id} value={f.token}>{f.title}</SelectItem>
+                   ))}
+                   {activeForms.filter((f: any) => f.isActive).length === 0 && (
+                     <p className="px-2 py-3 text-xs text-muted-foreground italic">No active forms available</p>
+                   )}
+                </SelectContent>
+              </Select>
             )}
           </div>
         </div>
@@ -474,77 +495,77 @@ export default function CandidatesPage() {
       {/* Stats Overview */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: "Active Candidates", value: candidates.length, icon: Users, color: "orange" },
-          { label: "Approved Applications", value: candidates.filter(c => c.status === 'approved').length, icon: CheckCircle, color: "emerald" },
-          { label: "Waitlisted", value: candidates.filter(c => c.status === 'waitlisted').length, icon: Clock, color: "amber" },
-          { label: "Allocated", value: candidates.filter(c => c.status === 'allocated').length, icon: Building2, color: "orange" }
+          { label: "Active Candidates", value: candidates.length, icon: Users, color: "blue" },
+          { label: "Approved Applications", value: candidates.filter(c => c.status === 'approved').length, icon: CheckCircle, color: "green" },
+          { label: "Waitlisted", value: candidates.filter(c => c.status === 'waitlisted').length, icon: Clock, color: "orange" },
+          { label: "Allocated", value: candidates.filter(c => c.status === 'allocated').length, icon: Building2, color: "indigo" }
         ].map((s, i) => (
-          <Card key={i} className="border-none shadow-sm bg-white dark:bg-zinc-900">
+          <Card key={i} className="rounded-xl border border-slate-200 shadow-sm bg-white">
             <CardContent className="p-4 flex items-center gap-4">
-              <div className={`h-11 w-11 rounded-2xl bg-${s.color}-50 dark:bg-${s.color}-900/20 flex items-center justify-center text-${s.color}-600 dark:text-${s.color}-400 shadow-inner`}>
+              <div className={`h-10 w-10 rounded-lg bg-${s.color}-50 flex items-center justify-center text-${s.color}-600`}>
                 <s.icon className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-2xl font-bold leading-none">{s.value}</p>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold mt-1">{s.label}</p>
+                <p className="text-2xl font-bold leading-none text-slate-900">{s.value}</p>
+                <p className="text-xs text-slate-500 font-semibold mt-1 uppercase tracking-wider">{s.label}</p>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <div className="bg-white p-2 rounded-[2rem] shadow-premium flex gap-2 flex-wrap border border-slate-100">
+      <div className="bg-white p-1 rounded-xl shadow-sm flex gap-2 flex-wrap border border-slate-200">
         <div className="relative flex-1 min-w-[300px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input 
             placeholder="Search candidates by name, code, or email…" 
             value={search} 
             onChange={(e) => setSearch(e.target.value)} 
-            className="pl-11 h-12 border-none bg-transparent focus-visible:ring-0 text-sm font-medium"
+            className="pl-10 h-10 border-none bg-transparent focus-visible:ring-0 text-sm font-medium"
           />
         </div>
-        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
         <Select value={specFilter} onValueChange={setSpecFilter}>
-          <SelectTrigger className="w-52 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
-            <Filter className="h-3.5 w-3.5 mr-2 text-slate-400" />
+          <SelectTrigger className="w-52 h-10 border-none bg-transparent focus:ring-0 font-semibold text-sm text-slate-700">
+            <Filter className="h-4 w-4 mr-2 text-slate-400" />
             <SelectValue placeholder="All Specializations" />
           </SelectTrigger>
-          <SelectContent className="rounded-2xl">
+          <SelectContent className="rounded-lg border-slate-200">
             <SelectItem value="all">All Specializations</SelectItem>
             {allSpecs.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
-        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-48 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
-            <Building2 className="h-3.5 w-3.5 mr-2 text-slate-400" />
+          <SelectTrigger className="w-48 h-10 border-none bg-transparent focus:ring-0 font-semibold text-sm text-slate-700">
+            <Building2 className="h-4 w-4 mr-2 text-slate-400" />
             <SelectValue placeholder="All Categories" />
           </SelectTrigger>
-          <SelectContent className="rounded-2xl">
+          <SelectContent className="rounded-lg border-slate-200">
             <SelectItem value="all">All Categories</SelectItem>
             <SelectItem value="Anterior">Anterior Segment</SelectItem>
             <SelectItem value="Retina">Retina (Posterior)</SelectItem>
           </SelectContent>
         </Select>
-        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
+          <SelectTrigger className="w-44 h-10 border-none bg-transparent focus:ring-0 font-semibold text-sm text-slate-700">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
-          <SelectContent className="rounded-2xl">
+          <SelectContent className="rounded-lg border-slate-200">
             <SelectItem value="all">All Statuses</SelectItem>
             {["pending", "approved", "rejected", "interview_completed", "waitlisted", "allocated"].map((s) => (
               <SelectItem key={s} value={s}>{s.replace(/_/g, " ").toUpperCase()}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <div className="h-12 w-px bg-slate-100 hidden md:block"></div>
+        <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="w-48 h-12 border-none bg-transparent focus:ring-0 font-bold text-xs uppercase tracking-wider">
-            <CalendarDays className="h-3.5 w-3.5 mr-2 text-slate-400" />
+          <SelectTrigger className="w-48 h-10 border-none bg-transparent focus:ring-0 font-semibold text-sm text-slate-700">
+            <CalendarDays className="h-4 w-4 mr-2 text-slate-400" />
             <SelectValue placeholder="Sort By" />
           </SelectTrigger>
-          <SelectContent className="rounded-2xl">
+          <SelectContent className="rounded-lg border-slate-200">
             <SelectItem value="date_desc">Applied (Newest)</SelectItem>
             <SelectItem value="date_asc">Applied (Oldest)</SelectItem>
             <SelectItem value="name_asc">Name (A-Z)</SelectItem>
@@ -566,29 +587,29 @@ export default function CandidatesPage() {
            <p className="text-slate-400 text-sm mt-1">Try adjusting your filters or search query.</p>
         </div>
       ) : (
-        <Card className="border-none shadow-2xl rounded-3xl overflow-hidden bg-white">
-          <div className="overflow-x-auto fancy-scrollbar">
+        <Card className="border border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50/50 border-b border-slate-100">
+                <tr className="bg-slate-50 border-b border-slate-200">
                   {canManage && (
-                    <th className="px-6 py-5 w-10">
+                    <th className="px-4 py-3 w-10">
                       <Checkbox
                         checked={allSelected}
                         onCheckedChange={toggleAll}
-                        className="rounded-md border-slate-300"
+                        className="rounded border-slate-300"
                       />
                     </th>
                   )}
-                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Candidate</th>
-                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Specialization</th>
-                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Marks</th>
-                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Payment</th>
-                  <th className="text-left px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
-                  <th className="text-right px-6 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Actions</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Candidate</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Specialization</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Marks</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Payment</th>
+                  <th className="text-left px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Status</th>
+                  <th className="text-right px-4 py-3 font-semibold text-slate-600 text-xs uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className="divide-y divide-slate-100">
                 {filtered.map((c) => (
                   <tr key={c.id} className={`group hover:bg-slate-50/50 transition-colors ${selected.has(c.id) ? "bg-orange-50/30" : ""}`}>
                     {canManage && (
@@ -623,7 +644,7 @@ export default function CandidatesPage() {
                     <td className="px-6 py-5 max-w-[200px]">
                       <div className="flex flex-wrap gap-1.5">
                         {c.specializations.length === 0 ? (
-                          <span className="text-[10px] font-bold text-slate-300 uppercase italic tracking-widest">No Selection</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase italic tracking-widest">No Selection</span>
                         ) : c.specializations.map((s) => (
                           <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
                              {s}
@@ -635,24 +656,29 @@ export default function CandidatesPage() {
                        <div className="flex flex-col gap-1">
                           <div className="flex items-center justify-between text-[10px] w-24">
                              <span className="font-bold text-slate-400 uppercase tracking-widest">MCQ</span>
-                             <span className={`font-black ${c.mcqScore ? 'text-slate-900' : 'text-slate-300 italic'}`}>{c.mcqScore ?? 'N/A'}</span>
+                             <span className={`font-black ${c.mcqScore ? 'text-slate-900' : 'text-slate-400 italic'}`}>{c.mcqScore ?? 'N/A'}</span>
                           </div>
                           <div className="flex items-center justify-between text-[10px] w-24">
                              <span className="font-bold text-slate-400 uppercase tracking-widest">Psy</span>
-                             <span className={`font-black ${c.psychometricScore ? 'text-slate-900' : 'text-slate-300 italic'}`}>{c.psychometricScore ?? 'N/A'}</span>
+                             <span className={`font-black ${c.psychometricScore ? 'text-slate-900' : 'text-slate-400 italic'}`}>{c.psychometricScore ?? 'N/A'}</span>
                           </div>
                        </div>
                     </td>
                     <td className="px-6 py-5">
-                      {c.paymentInfo ? (
-                        <div className="flex flex-col">
-                          <span className="text-sm font-black text-slate-900 leading-none">₹{c.paymentInfo.amount}</span>
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{c.paymentInfo.mode}</span>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest italic">—</span>
-                      )}
-                    </td>
+                       {c.paymentInfo && c.paymentInfo.amount != null ? (
+                         <div className="flex flex-col">
+                           <span className="text-sm font-black text-slate-900 leading-none">₹{c.paymentInfo.amount}</span>
+                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">{c.paymentInfo.mode}</span>
+                         </div>
+                       ) : c.status === 'approved' || c.status === 'interview_completed' || c.status === 'allocated' ? (
+                         <div className="flex flex-col">
+                           <span className="text-sm font-black text-emerald-600 leading-none">₹2,750</span>
+                           <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">PAID (Verified)</span>
+                         </div>
+                       ) : (
+                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">—</span>
+                       )}
+                     </td>
                     <td className="px-6 py-5">
                         {canManage ? (
                           <div className="flex flex-col gap-1.5">

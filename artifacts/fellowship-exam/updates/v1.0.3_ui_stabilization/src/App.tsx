@@ -31,8 +31,7 @@ import QueueDisplayPage from "./pages/QueueDisplayPage";
 import DisplayPage from "./pages/DisplayPage";
 import NotFound from "./pages/not-found";
 import { Loader2 } from "lucide-react";
-import EmailSettingsPage from "./pages/EmailSettingsPage";
-import VerifyLorPage from "./pages/VerifyLorPage";
+
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,7 +58,7 @@ function AppRouter() {
   if (user.forcePasswordReset) return <ForcePasswordResetPage />;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-transparent">
+    <div className="flex min-h-screen bg-transparent">
       <InteractiveBackground />
       <AppSidebar />
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0 relative z-10">
@@ -75,20 +74,16 @@ function AppRouter() {
             <Route path="/rankings" component={RankingsPage} />
             <Route path="/allocations" component={AllocationsPage} />
             <Route path="/application-forms" component={ApplicationFormsPage} />
-            <Route path="/application-forms/:token/manual-entry">
-              {(params) => <ApplyPage token={params.token} isManualEntry={true} />}
-            </Route>
             <Route path="/units" component={UnitsPage} />
             <Route path="/seat-matrix" component={SeatMatrixPage} />
             <Route path="/payments" component={PaymentsPage} />
             <Route path="/batches" component={BatchesPage} />
             <Route path="/reports" component={ReportsPage} />
-            <Route path="/email-settings" component={EmailSettingsPage} />
+
             <Route path="/profile" component={ProfilePage} />
             <Route path="/results" component={ResultsPage} />
             <Route path="/display" component={DisplayPage} />
             <Route path="/tv" component={QueueDisplayPage} />
-            <Route path="/verify-lor" component={VerifyLorPage} />
             <Route component={NotFound} />
           </Switch>
         </PageTransition>

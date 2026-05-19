@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import {
   CreditCard, Plus, Pencil, Trash2, Building2, Eye, EyeOff, Copy, Check,
-  IndianRupee, Zap, AlertCircle, CheckCircle2, Smartphone, MapPin
+  IndianRupee, Zap, AlertCircle, CheckCircle2, Smartphone, MapPin, Loader2
 } from "lucide-react";
 import QRCode from "react-qr-code";
 import { useToast } from "../hooks/use-toast";

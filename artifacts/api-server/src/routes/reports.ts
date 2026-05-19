@@ -47,7 +47,7 @@ router.get("/reports/cycle-report", requireAuth, requireRole("super_admin", "pro
       
       return {
         "Staff/Doctor Name": doc?.fullName || "Unknown",
-        "Staff Role": doc?.role.replace("_", " ").toUpperCase() || "N/A",
+        "Staff Role": doc?.role?.replace("_", " ").toUpperCase() || "N/A",
         "Candidate Evaluated": cand?.fullName || "Unknown",
         "Candidate ID": cand?.candidateCode || "N/A",
         "Score Awarded": sc.score,

@@ -71,13 +71,13 @@ import {
 import { useToast } from "../hooks/use-toast";
 import * as XLSX from 'xlsx';
 
-// Helper to convert numbers to Indian currency words
 function numberToWords(num: number): string {
   const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
   const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
 
-  if ((num = num.toString()).length > 9) return 'overflow';
-  let n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+  const numStr = num.toString();
+  if (numStr.length > 9) return 'overflow';
+  let n: any = ('000000000' + numStr).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
   if (!n) return '';
   let str = '';
   str += (Number(n[1]) != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
@@ -107,7 +107,7 @@ export default function AllocationsPage() {
   // Offer Details Form State
   const [sendingCandidate, setSendingCandidate] = useState<any | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string>("default");
-  const [offerDetails, setOfferDetails] = useState({
+  const [offerDetails, setOfferDetails] = useState<any>({
     interview_date: "",
     duration: "24 Months",
     start_date: "",
@@ -116,7 +116,9 @@ export default function AllocationsPage() {
     stipend: "45000",
     stipend_words: "Forty Five Thousand",
     reporting_doctor: "Dr. Kaushik Murali",
-    signing_authority: "Dr. Kaushik Murali"
+    signing_authority: "Dr. Kaushik Murali",
+    unit: "",
+    specialization: ""
   });
 
   const [dossierCandidate, setDossierCandidate] = useState<any | null>(null);
@@ -158,7 +160,17 @@ export default function AllocationsPage() {
 
   const downloadMutation = useMutation({
     mutationFn: async (data: { id: number, payload: any }) => {
-      const blob = await api.post(`/candidates/${data.id}/generate-document`, data.payload, { responseType: 'blob' });
+      const token = localStorage.getItem("fellowship_token");
+      const res = await fetch(`/api/candidates/${data.id}/generate-document`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify(data.payload),
+      });
+      if (!res.ok) throw new Error("Generation failed");
+      const blob = await res.blob();
       const url = window.URL.createObjectURL(new Blob([blob as any]));
       const link = document.createElement('a');
       link.href = url;
@@ -206,7 +218,7 @@ export default function AllocationsPage() {
 
   const handleStipendChange = (val: string) => {
     const num = parseInt(val) || 0;
-    setOfferDetails(prev => ({ ...prev, stipend: val, stipend_words: numberToWords(num) }));
+    setOfferDetails((prev: any) => ({ ...prev, stipend: val, stipend_words: numberToWords(num) }));
   };
 
   const occupancy: Record<string, number> = {};
@@ -253,7 +265,7 @@ export default function AllocationsPage() {
 
   // Rankings within specialities
   const specialityRankings: Record<string, any[]> = {};
-  SPECIALIZATIONS.forEach(spec => {
+  SPECIALIZATIONS.forEach((spec: string) => {
     specialityRankings[spec] = scoredCandidates
       .filter(c => c.preferences.includes(spec))
       .sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
@@ -376,7 +388,7 @@ export default function AllocationsPage() {
                 <div className="h-20 w-20 bg-amber-50 rounded-3xl flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform shadow-sm">
                   <Medal className="w-10 h-10 text-amber-500" />
                 </div>
-                <h3 className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{Math.max(0, (SPECIALIZATIONS.reduce((acc, s) => acc + (SEAT_MATRIX[s] || 0), 0)) - candidates.filter((c: any) => c.status === 'allocated').length)}</h3>
+                <h3 className="text-5xl font-black text-slate-900 tracking-tighter leading-none">{Math.max(0, (SPECIALIZATIONS.reduce((acc: number, s: string) => acc + (SEAT_MATRIX[s] || 0), 0)) - candidates.filter((c: any) => c.status === 'allocated').length)}</h3>
                 <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mt-4">Strategic Vacancy</p>
              </Card>
 
@@ -396,7 +408,7 @@ export default function AllocationsPage() {
                    <Badge className="bg-primary/20 text-primary border-none font-black text-[10px] h-7 px-4">REAL-TIME INVENTORY</Badge>
                 </div>
                 <div className="p-10 grid grid-cols-1 md:grid-cols-2 gap-8">
-                   {SPECIALIZATIONS.map(spec => {
+                   {SPECIALIZATIONS.map((spec: string) => {
                       const total = SEAT_MATRIX[spec] || 0;
                       const filled = occupancy[spec] || 0;
                       const percent = (filled / total) * 100;
@@ -529,7 +541,7 @@ export default function AllocationsPage() {
               >
                 Integrated Rankings
               </Button>
-              {SPECIALIZATIONS.map(spec => (
+              {SPECIALIZATIONS.map((spec: string) => (
                 <Button 
                   key={spec}
                   variant={selectedSpecTab === spec ? "default" : "outline"}
@@ -596,7 +608,7 @@ export default function AllocationsPage() {
                                     </span>
                                   </div>
                                   <span className="text-[9px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-1">
-                                     <MapPin className="h-2 w-2" /> {Object.values(c.parsedCenterPreference || {})?.[0] || "Institutional Choice"}
+                                     <MapPin className="h-2 w-2" /> {(Object.values(c.parsedCenterPreference || {})?.[0] as string) || "Institutional Choice"}
                                   </span>
                                </div>
                             </div>
@@ -637,7 +649,7 @@ export default function AllocationsPage() {
                        </CardTitle>
                     </CardHeader>
                     <CardContent className="p-8 space-y-8">
-                       {SPECIALIZATIONS.map(spec => {
+                       {SPECIALIZATIONS.map((spec: string) => {
                           const total = SEAT_MATRIX[spec] || 0;
                           const filled = occupancy[spec] || 0;
                           const remaining = total - filled;
@@ -726,7 +738,7 @@ export default function AllocationsPage() {
                                                    <Award className="w-3.5 h-3.5 text-orange-500" /> Choice 1: {c.preferences[0] || "General Track"}
                                                 </div>
                                                 <div className="flex items-center gap-2 text-[10px] font-black text-rose-500 uppercase tracking-widest bg-rose-50 w-fit px-3 py-1.5 rounded-lg border border-rose-100 shadow-sm">
-                                                   <MapPin className="w-3.5 h-3.5" /> {Object.values(c.parsedCenterPreference || {})?.[0] || "INSTITUTIONAL CHOICE"}
+                                                   <MapPin className="w-3.5 h-3.5" /> {(Object.values(c.parsedCenterPreference || {})?.[0] as string) || "INSTITUTIONAL CHOICE"}
                                                 </div>
                                              </div>
                                          </div>
@@ -752,7 +764,7 @@ export default function AllocationsPage() {
                                             <Button className="bg-slate-900 rounded-2xl px-8 h-12 font-black uppercase tracking-widest text-[11px] shadow-xl shadow-slate-900/20 hover:bg-primary transition-colors" 
                                                onClick={() => {
                                                   setSendingCandidate({...c, allocatedSpec: c.reviewNotes.replace('Allocated to ', '').split(' [')[0]});
-                                                  setOfferDetails(prev => ({ ...prev, specialization: c.reviewNotes.replace('Allocated to ', '').split(' [')[0], unit: c.unitName }));
+                                                  setOfferDetails((prev: any) => ({ ...prev, specialization: c.reviewNotes.replace('Allocated to ', '').split(' [')[0], unit: c.unitName }));
                                                }}>
                                                Dispatch Offer
                                             </Button>

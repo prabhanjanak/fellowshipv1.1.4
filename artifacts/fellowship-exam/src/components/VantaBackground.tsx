@@ -30,6 +30,7 @@ function AnimatedWaves() {
     let t = 0;
 
     function draw() {
+      if (!canvas || !ctx) return;
       ctx.clearRect(0, 0, W, H);
 
       // Very dark background so waves stand out
@@ -115,6 +116,7 @@ function VantaWaves({
     let effect: { destroy: () => void } | null = null;
     (async () => {
       try {
+        // @ts-ignore
         const mod = await import("vanta/dist/vanta.waves.min");
         const fn = ((mod as { default?: unknown }).default ?? mod) as (o: object) => { destroy: () => void };
         if (!containerRef.current) return;

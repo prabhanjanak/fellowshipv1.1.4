@@ -2,7 +2,7 @@ import { Router } from "express";
 import { DEFAULT_SECTIONS } from "../lib/default-sections";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { db, applicationFormsTable, applicationSubmissionsTable, programsTable, candidatesTable, candidatePreferencesTable, specialitiesTable, paymentSettingsTable } from "@workspace/db";
+import { db, applicationFormsTable, applicationSubmissionsTable, programsTable, candidatesTable, candidatePreferencesTable, specialitiesTable, paymentSettingsTable, documentsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import * as XLSX from "xlsx";
 import { sendApplicationApprovalEmail } from "../lib/email";
@@ -588,6 +588,42 @@ router.patch(
       .where(eq(applicationSubmissionsTable.id, id))
       .returning();
     if (!updated) return res.status(404).json({ error: "Submission not found" });
+
+    // If status is updated to 'approved' or 'reviewed', ensure candidate is created
+    if (updates.status === "approved" || updates.status === "reviewed") {
+      const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, updated.email));
+      if (existing.length === 0) {
+        const year = new Date().getFullYear();
+        const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+        const code = `SAV-${year}-${rand}`;
+
+        const [candidate] = await db.insert(candidatesTable).values({
+          candidateCode: code,
+          fullName: updated.fullName,
+          email: updated.email,
+          phone: updated.phone ?? null,
+          dateOfBirth: updated.dateOfBirth ?? null,
+          gender: null,
+          address: updated.permanentAddress ?? null,
+          qualification: updated.degree ?? null,
+          collegeName: updated.medicalCollege ?? null,
+          status: "pending",
+        }).returning();
+
+        if (updated.specialization && candidate) {
+          const specs = await db.select().from(specialitiesTable);
+          const spec = specs.find((s) => s.name === updated.specialization);
+          if (spec) {
+            await db.insert(candidatePreferencesTable).values({
+              candidateId: candidate.id,
+              specialityId: spec.id,
+              preferenceOrder: 1,
+            });
+          }
+        }
+      }
+    }
+
     res.json(updated);
   }
 );
@@ -604,9 +640,10 @@ router.post(
     const form = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, sub.formId));
     const programId = form[0]?.programId ?? 1;
 
-    const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, sub.email));
+    const subEmail = sub.email.toLowerCase().trim();
+    const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, subEmail));
     if (existing.length > 0) {
-      await db.update(applicationSubmissionsTable).set({ status: "approved", reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+      await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: existing[0]!.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
       return res.json({ message: "Candidate already exists", candidateId: existing[0]!.id });
     }
 
@@ -617,7 +654,7 @@ router.post(
     const [candidate] = await db.insert(candidatesTable).values({
       candidateCode: code,
       fullName: sub.fullName,
-      email: sub.email,
+      email: subEmail,
       phone: sub.phone ?? null,
       dateOfBirth: sub.dateOfBirth ?? null,
       gender: null,
@@ -627,30 +664,91 @@ router.post(
       status: "pending",
     }).returning();
 
+    if (!candidate) {
+      return res.status(500).json({ error: "Failed to create candidate" });
+    }
+
     if (sub.specialization) {
-      const specs = await db.select().from(specialitiesTable);
-      const spec = specs.find((s) => s.name === sub.specialization);
-      if (spec) {
-        await db.insert(candidatePreferencesTable).values({
-          candidateId: candidate!.id,
-          specialityId: spec.id,
-          preferenceOrder: 1,
-        });
+      let specList: string[] = [];
+      try {
+        const cleaned = sub.specialization.trim();
+        if (cleaned.startsWith("[")) {
+          specList = JSON.parse(cleaned);
+        } else if (cleaned.includes(",")) {
+          specList = cleaned.split(",").map(s => s.trim());
+        } else {
+          specList = [cleaned];
+        }
+      } catch (err) {
+        specList = [sub.specialization.trim()];
+      }
+
+      if (Array.isArray(specList) && specList.length > 0) {
+        const specs = await db.select().from(specialitiesTable);
+        let order = 1;
+        for (const specName of specList) {
+          const spec = specs.find((s) => s.name.toLowerCase() === specName.toLowerCase());
+          if (spec) {
+            await db.insert(candidatePreferencesTable).values({
+              candidateId: candidate.id,
+              specialityId: spec.id,
+              preferenceOrder: order++,
+            });
+          }
+        }
       }
     }
 
-    await db.update(applicationSubmissionsTable).set({ status: "approved", reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+    // Copy documents from submission to candidate's documents
+    const docEntries: { candidateId: number; docType: string; fileName: string; fileUrl: string }[] = [];
+    if (sub.lor1Url) {
+      docEntries.push({
+        candidateId: candidate.id,
+        docType: "LOR1",
+        fileName: sub.lor1RefName ? `LOR1_${sub.lor1RefName}.pdf` : "LOR1.pdf",
+        fileUrl: sub.lor1Url,
+      });
+    }
+    if (sub.lor2Url) {
+      docEntries.push({
+        candidateId: candidate.id,
+        docType: "LOR2",
+        fileName: sub.lor2RefName ? `LOR2_${sub.lor2RefName}.pdf` : "LOR2.pdf",
+        fileUrl: sub.lor2Url,
+      });
+    }
+    if (sub.photoUrl) {
+      docEntries.push({
+        candidateId: candidate.id,
+        docType: "PHOTO",
+        fileName: "photo.jpg",
+        fileUrl: sub.photoUrl,
+      });
+    }
+    if (sub.paymentUrl) {
+      docEntries.push({
+        candidateId: candidate.id,
+        docType: "PAYMENT",
+        fileName: "payment_proof.jpg",
+        fileUrl: sub.paymentUrl,
+      });
+    }
+    if (docEntries.length > 0) {
+      await db.insert(documentsTable).values(docEntries).onConflictDoNothing();
+    }
+
+    await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: candidate.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
 
     const prog = await db.select().from(programsTable).where(eq(programsTable.id, programId));
     sendApplicationApprovalEmail({
-      toEmail: sub.email,
+      toEmail: subEmail,
       toName: sub.fullName,
-      candidateCode: candidate!.candidateCode,
+      candidateCode: candidate.candidateCode,
       programName: prog[0]?.name ?? "Fellowship Program",
       formTitle: form[0]?.title ?? "Application",
     }).catch((e: Error) => console.warn("[email] failed:", e.message));
 
-    res.json({ message: "Candidate created", candidateId: candidate!.id });
+    res.json({ message: "Candidate created", candidateId: candidate.id });
   }
 );
 
@@ -688,9 +786,10 @@ router.post(
           const form = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.id, sub.formId));
           const programId = form[0]?.programId ?? 1;
 
-          const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, sub.email));
+          const subEmail = sub.email.toLowerCase().trim();
+          const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, subEmail));
           if (existing.length > 0) {
-            await db.update(applicationSubmissionsTable).set({ status: "approved", reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+            await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: existing[0]!.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
             approved++;
             continue;
           }
@@ -702,7 +801,7 @@ router.post(
           const [candidate] = await db.insert(candidatesTable).values({
             candidateCode: code,
             fullName: sub.fullName,
-            email: sub.email,
+            email: subEmail,
             phone: sub.phone ?? null,
             dateOfBirth: sub.dateOfBirth ?? null,
             gender: null,
@@ -712,30 +811,87 @@ router.post(
             status: "pending",
           }).returning();
 
+          if (!candidate) continue;
+
           if (sub.specialization) {
-            const specs = await db.select().from(specialitiesTable);
-            const spec = specs.find((s) => s.name === sub.specialization);
-            if (spec && candidate) {
-              await db.insert(candidatePreferencesTable).values({
-                candidateId: candidate.id,
-                specialityId: spec.id,
-                preferenceOrder: 1,
-              }).onConflictDoNothing();
+            let specList: string[] = [];
+            try {
+              const cleaned = sub.specialization.trim();
+              if (cleaned.startsWith("[")) {
+                specList = JSON.parse(cleaned);
+              } else if (cleaned.includes(",")) {
+                specList = cleaned.split(",").map(s => s.trim());
+              } else {
+                specList = [cleaned];
+              }
+            } catch (err) {
+              specList = [sub.specialization.trim()];
+            }
+
+            if (Array.isArray(specList) && specList.length > 0) {
+              const specs = await db.select().from(specialitiesTable);
+              let order = 1;
+              for (const specName of specList) {
+                const spec = specs.find((s) => s.name.toLowerCase() === specName.toLowerCase());
+                if (spec) {
+                  await db.insert(candidatePreferencesTable).values({
+                    candidateId: candidate.id,
+                    specialityId: spec.id,
+                    preferenceOrder: order++,
+                  }).onConflictDoNothing();
+                }
+              }
             }
           }
 
-          await db.update(applicationSubmissionsTable).set({ status: "approved", reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
-
-          if (candidate) {
-            const prog = await db.select().from(programsTable).where(eq(programsTable.id, programId));
-            sendApplicationApprovalEmail({
-              toEmail: sub.email,
-              toName: sub.fullName,
-              candidateCode: candidate.candidateCode,
-              programName: prog[0]?.name ?? "Fellowship Program",
-              formTitle: form[0]?.title ?? "Application",
-            }).catch(() => { });
+          // Copy documents from submission to candidate's documents
+          const docEntries: { candidateId: number; docType: string; fileName: string; fileUrl: string }[] = [];
+          if (sub.lor1Url) {
+            docEntries.push({
+              candidateId: candidate.id,
+              docType: "LOR1",
+              fileName: sub.lor1RefName ? `LOR1_${sub.lor1RefName}.pdf` : "LOR1.pdf",
+              fileUrl: sub.lor1Url,
+            });
           }
+          if (sub.lor2Url) {
+            docEntries.push({
+              candidateId: candidate.id,
+              docType: "LOR2",
+              fileName: sub.lor2RefName ? `LOR2_${sub.lor2RefName}.pdf` : "LOR2.pdf",
+              fileUrl: sub.lor2Url,
+            });
+          }
+          if (sub.photoUrl) {
+            docEntries.push({
+              candidateId: candidate.id,
+              docType: "PHOTO",
+              fileName: "photo.jpg",
+              fileUrl: sub.photoUrl,
+            });
+          }
+          if (sub.paymentUrl) {
+            docEntries.push({
+              candidateId: candidate.id,
+              docType: "PAYMENT",
+              fileName: "payment_proof.jpg",
+              fileUrl: sub.paymentUrl,
+            });
+          }
+          if (docEntries.length > 0) {
+            await db.insert(documentsTable).values(docEntries).onConflictDoNothing();
+          }
+
+          await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: candidate.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+
+          const prog = await db.select().from(programsTable).where(eq(programsTable.id, programId));
+          sendApplicationApprovalEmail({
+            toEmail: subEmail,
+            toName: sub.fullName,
+            candidateCode: candidate.candidateCode,
+            programName: prog[0]?.name ?? "Fellowship Program",
+            formTitle: form[0]?.title ?? "Application",
+          }).catch(() => { });
           approved++;
         } catch (e) {
           console.warn(`[bulk-approve] id=${id} failed:`, e);
@@ -1591,8 +1747,11 @@ router.post("/apply/:token", async (req, res) => {
   if (razorpayId) {
     if (body.paymentMode === "Manual Offline") {
       subData.paymentId = razorpayId;
+      subData.paymentMode = "Manual Offline";
+      subData.paidAmount = body.paidAmount ? Number(body.paidAmount) : 0;
     } else {
       subData.paymentUrl = `razorpay:${razorpayId}`;
+      subData.paymentMode = "Razorpay";
     }
   }
 

@@ -98,6 +98,7 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
       id: d.id,
       docType: d.docType,
       fileName: d.fileName,
+      fileUrl: d.fileUrl ?? null,
       uploadedAt: d.uploadedAt.toISOString(),
     })),
     attempts: attempts.map((a) => {
@@ -133,6 +134,10 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
     reviewNotes: await (async () => {
       const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
       return sub?.reviewNotes ?? null;
+    })(),
+    pgQualifications: await (async () => {
+      const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
+      return sub?.pgQualifications ?? null;
     })(),
   };
 }
@@ -218,6 +223,10 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
         const sub = allSubmissions.find(s => s.email === c.email);
         return sub?.reviewNotes ?? null;
       })(),
+      pgQualifications: (() => {
+        const sub = allSubmissions.find(s => s.email === c.email);
+        return sub?.pgQualifications ?? null;
+      })(),
     };
   });
   res.json(out);
@@ -301,18 +310,67 @@ router.patch("/candidates/:candidateId", requireAuth, requireRole("super_admin",
 });
 
 router.post("/candidates", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
-  const { fullName, email, phone, gender, qualification, collegeName, address, unitId } = req.body as {
+  const { fullName, email, phone, gender, qualification, collegeName, address, unitId, pgQualifications, centerPreference, specialityIds } = req.body as {
     fullName: string; email: string; phone?: string; gender?: string; qualification?: string; collegeName?: string; address?: string; unitId?: number;
+    pgQualifications?: string; centerPreference?: string; specialityIds?: number[];
   };
   if (!fullName || !email) { res.status(400).json({ error: "fullName and email required" }); return; }
+  
+  const cleanEmail = email.toLowerCase().trim();
+  const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, cleanEmail));
+  if (existing.length > 0) {
+    res.status(400).json({ error: "Candidate with this email already exists" });
+    return;
+  }
+
   const count = await db.select().from(candidatesTable);
   const candidateCode = `CAND-2026-${String(count.length + 1).padStart(3, "0")}`;
   const [c] = await db.insert(candidatesTable).values({
-    candidateCode, fullName, email: email.toLowerCase(), phone: phone ?? null,
+    candidateCode, fullName, email: cleanEmail, phone: phone ?? null,
     gender: gender ?? null, qualification: qualification ?? null, collegeName: collegeName ?? null,
     address: address ?? null, unitId: unitId ?? null, status: "pending",
   }).returning();
   if (!c) { res.status(500).json({ error: "Failed" }); return; }
+
+  // Insert candidate speciality preferences
+  const specialityNames: string[] = [];
+  if (Array.isArray(specialityIds) && specialityIds.length > 0) {
+    const specs = await db.select().from(specialitiesTable);
+    let order = 1;
+    for (const specId of specialityIds) {
+      const spec = specs.find((s) => s.id === specId);
+      if (spec) {
+        specialityNames.push(spec.name);
+        await db.insert(candidatePreferencesTable).values({
+          candidateId: c.id,
+          specialityId: spec.id,
+          preferenceOrder: order++,
+        });
+      }
+    }
+  }
+
+  // Create a corresponding stub submission in application_submissions table to ensure qualifications, center preferences, and LORs display perfectly
+  const activeForms = await db.select().from(applicationFormsTable).where(eq(applicationFormsTable.isActive, true));
+  const formId = activeForms[0]?.id ?? 1;
+
+  await db.insert(applicationSubmissionsTable).values({
+    candidateId: c.id,
+    formId,
+    fullName: c.fullName,
+    email: cleanEmail,
+    phone: c.phone,
+    permanentAddress: c.address,
+    degree: c.qualification,
+    medicalCollege: c.collegeName,
+    pgQualifications: pgQualifications || null,
+    centerPreference: centerPreference || null,
+    specialization: specialityNames.length > 0 ? JSON.stringify(specialityNames) : null,
+    status: "approved",
+    readyForReview: true,
+    source: "manual",
+  });
+
   res.json({ id: c.id, candidateCode: c.candidateCode, fullName: c.fullName, email: c.email, phone: c.phone, unitId: c.unitId, unitName: null, status: c.status });
 });
 

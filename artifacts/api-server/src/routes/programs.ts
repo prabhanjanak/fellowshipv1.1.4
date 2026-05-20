@@ -9,7 +9,8 @@ async function programSummary(p: Record<string, any>) {
   const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, p.id));
   const totalSeats = specs.reduce((sum, s) => sum + s.seats, 0);
   const allocs = await db.select().from(allocationsTable).where(eq(allocationsTable.programId, p.id));
-  const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, (p as any).isMock));
+  const isMockVal = p.isMock === true;
+  const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMockVal));
   return {
     id: p.id,
     name: p.name,
@@ -26,7 +27,10 @@ async function programSummary(p: Record<string, any>) {
 
 router.get("/programs", requireAuth, async (req: any, res) => {
   const programs = await db.select().from(programsTable).where(eq(programsTable.isMock, req.isMockMode));
-  const out = await Promise.all(programs.map(programSummary));
+  const out = [];
+  for (const p of programs) {
+    out.push(await programSummary(p));
+  }
   res.json(out.map(({ _allocs: _a, ...rest }) => rest));
 });
 

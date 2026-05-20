@@ -70,7 +70,8 @@ const roleLabel: Record<string, string> = {
 
 function SidebarContent({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed?: boolean }) {
   const { user, logout } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { theme: rawTheme, toggleTheme } = useTheme();
+  const theme = rawTheme as any;
   const [location] = useLocation();
 
   if (!user) return null;

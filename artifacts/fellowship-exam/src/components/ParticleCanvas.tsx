@@ -61,6 +61,7 @@ export default function ParticleCanvas({
     const REPEL_FORCE = 6;
 
     function draw() {
+      if (!canvas || !ctx) return;
       W = canvas.width;
       H = canvas.height;
       ctx.clearRect(0, 0, W, H);

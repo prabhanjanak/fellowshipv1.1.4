@@ -152,23 +152,24 @@ export default function DashboardPage() {
 
   return (
     <div className="p-10 space-y-12 bg-transparent min-h-screen relative z-10">
-      <div className="relative overflow-hidden rounded-[48px] bg-slate-900 p-12 text-white shadow-2xl border border-white/5">
-        <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-orange-500/20 to-transparent pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 p-10 text-white shadow-xl border border-slate-800/80">
+        <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-indigo-500/10 to-transparent pointer-events-none" />
+        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
         
-        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-10">
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <Badge className="bg-orange-500/20 text-orange-400 border-none font-black text-[10px] tracking-[0.2em] h-8 px-5">INSTITUTIONAL COMMAND CENTER</Badge>
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                <ShieldCheck className="h-3 w-3 text-emerald-500" /> Secure Node
+        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="space-y-3.5 text-left">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge className="bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-medium text-[10px] tracking-wider h-6 px-3 rounded-full">
+                INSTITUTIONAL COMMAND CENTER
+              </Badge>
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Secure Node
               </div>
             </div>
-            <h1 className="text-6xl font-black tracking-tighter leading-[1.1] italic uppercase py-2">
-              Welcome Back, <br />
-              <span className="bg-gradient-to-r from-orange-400 to-amber-200 bg-clip-text text-transparent px-1">{user?.fullName}</span>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight pt-1">
+              Welcome back, <span className="bg-gradient-to-r from-indigo-200 via-blue-100 to-white bg-clip-text text-transparent">{user?.fullName}</span>
             </h1>
-            <p className="text-slate-400 font-bold uppercase tracking-widest text-xs max-w-lg leading-relaxed">
+            <p className="text-slate-400 text-sm max-w-xl leading-relaxed font-normal">
               {role === "unit_coordinator" ? `Managing Hospital Unit Protocols` : "Orchestrating the Sankara Academy of Vision Fellowship Lifecycle with real-time merit data and specialized analytics."}
             </p>
           </div>
@@ -177,18 +178,17 @@ export default function DashboardPage() {
             {(role === "super_admin" || role === "program_admin") && (
               <Button
                 variant="outline"
-                className="h-16 px-10 rounded-3xl bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 text-white font-black uppercase tracking-widest text-[11px] gap-3 backdrop-blur-xl transition-all shadow-xl"
+                className="h-12 px-6 rounded-2xl bg-white/5 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 text-slate-200 font-semibold text-xs tracking-wider uppercase gap-2.5 backdrop-blur-md transition-all shadow-lg"
                 onClick={() => {
                   setTvCodeOpen(true);
                   setShowTvCode(false);
                   loadTvCode();
                 }}
               >
-                <MonitorPlay className="h-5 w-5 text-emerald-400" />
+                <MonitorPlay className="h-4.5 w-4.5 text-indigo-400" />
                 Live TV Access
               </Button>
             )}
-
           </div>
         </div>
       </div>

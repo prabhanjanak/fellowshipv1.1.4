@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { loadDraft, saveDraft, clearDraft } from "../lib/draftStore";
 import logoUrl from "../assets/seh_sav_logo_1777703794142.jpg";
 import { Loader2, AlertCircle, CheckCircle2, ChevronRight, ChevronLeft, ChevronDown, CreditCard } from "lucide-react";
 import { Card, CardContent } from "../components/ui/card";
@@ -18,13 +19,13 @@ const API = "/api";
 
 const INITIAL_FORM = {
   fullName: "", email: "", phone: "", dateOfBirth: "", maritalStatus: "", spouseDetails: "",
-  specialization: "",
+  specialization: [] as string[],
   centerPreference: "",
   referralSource: "", referredByName: "", mediaSource: "",
   permanentAddress: "", mailingAddress: "",
   medicalConditions: [] as string[],
   previousApplicationMonthYear: "", appearedEarlier: "No",
-  degree: "", medicalCollege: "", university: "", pgQualification: "",
+  degree: "", medicalCollege: "", university: "", pgQualifications: "",
   qualificationMatrix: {} as Record<string, string>,
   doDetails: "", msMdDetails: "", dnbDetails: "",
   medicalCouncilNumber: "", otherCertifications: "",
@@ -132,31 +133,32 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
   }, []);
 
   useEffect(() => {
-    fetch(`${API}/apply/${token}?t=${Date.now()}`, {
-      headers: { 'Cache-Control': 'no-cache' }
-    })
-      .then(async (r) => {
+    let active = true;
+    
+    async function loadFormAndDraft() {
+      try {
+        const r = await fetch(`${API}/apply/${token}?t=${Date.now()}`, {
+          headers: { 'Cache-Control': 'no-cache' }
+        });
         if (!r.ok) {
           const b = await r.json().catch(() => ({}));
           throw new Error(b.error ?? "Form not found");
         }
-        return r.json();
-      })
-      .then((data) => {
+        const data = await r.json();
+        if (!active) return;
+        
         setFormInfo(data);
         if (data.sectionsConfig && data.sectionsConfig.length > 0) {
-           // Check for draft in localStorage
-           const savedDraft = localStorage.getItem(`fellowship_draft_${token}`);
-           if (savedDraft) {
-             try {
-               const { form: savedForm, step: savedStep } = JSON.parse(savedDraft);
-               console.log(`[AutoSave] Found draft for ${token}, restoring step ${savedStep}`);
-               setForm(savedForm);
-               setStep(savedStep);
-               return; // Exit early if draft loaded
-             } catch (e) {
-               console.error("[AutoSave] Failed to parse saved draft", e);
+           // Check for draft in IndexedDB
+           const savedDraft = await loadDraft(token);
+           if (active && savedDraft) {
+             console.log(`[AutoSave] Found IndexedDB draft for ${token}, restoring step ${savedDraft.step}`);
+             setForm(savedDraft.form);
+             setStep(savedDraft.step);
+             if (savedDraft.files) {
+               setFiles(savedDraft.files);
              }
+             return;
            }
 
            const initial: Record<string, any> = { ...INITIAL_FORM };
@@ -165,39 +167,38 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                if (f.defaultValue !== undefined) initial[f.id] = f.defaultValue;
              });
            });
-           setForm(initial);
+           if (active) setForm(initial);
         }
-      })
-      .catch((e: Error) => setFormError(e.message))
-      .finally(() => setLoading(false));
+      } catch (e: any) {
+        if (active) setFormError(e.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
 
-    // Save draft periodically
-    const draftKey = `fellowship_draft_${token}`;
-    const interval = setInterval(() => {
-      // We'll use the latest state via functional update if needed, but here we can just watch form/step
-    }, 5000);
+    loadFormAndDraft();
 
-    return () => clearInterval(interval);
+    return () => {
+      active = false;
+    };
   }, [token]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   
-  // Effect to save draft whenever form or step changes
+  // Effect to save draft whenever form, step, or files change
   useEffect(() => {
     if (formInfo && !submitted) {
-      console.log(`[AutoSave] Saving draft for token: ${token}`);
+      console.log(`[AutoSave] Saving draft to IndexedDB for token: ${token}`);
       setIsSaving(true);
-      localStorage.setItem(`fellowship_draft_${token}`, JSON.stringify({ form, step }));
-      const timer = setTimeout(() => {
+      
+      saveDraft(token, { form, step, files }).then(() => {
         setIsSaving(false);
         setLastSaved(new Date().toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' }));
-        console.log(`[AutoSave] Draft saved at ${new Date().toLocaleTimeString()}`);
-      }, 800);
-      return () => clearTimeout(timer);
+        console.log(`[AutoSave] Draft + files successfully saved to IndexedDB`);
+      });
     }
-    return undefined;
-  }, [form, step, token, formInfo, submitted]);
+  }, [form, step, files, token, formInfo, submitted]);
 
   useEffect(() => {
     // Load payment config
@@ -228,13 +229,42 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
   };
 
   const validateStep = (currentStep: number) => {
-    const section = formInfo.sectionsConfig[currentStep];
+    const sections = formInfo?.sectionsConfig ? [...formInfo.sectionsConfig] : [];
+    if (isManualEntry && sections.length > 0 && sections[sections.length - 1].id !== 'manual_payment') {
+      sections.push({
+        id: 'manual_payment',
+        title: "Administrative Manual Payment",
+        description: "Enter offline payment details for this candidate.",
+        fields: [
+          { id: "paymentUTR", type: "text", label: "Payment Reference / UTR Number", required: true },
+          { id: "paymentUrl", type: "file", label: "Payment Screenshot", required: true }
+        ]
+      });
+    }
+    const section = sections[currentStep];
     if (!section) return true;
     const newErrors: Record<string, string> = {};
     let hasError = false;
 
     section.fields.forEach((f: any) => {
-      if (f.required) {
+      // Check visibility logic first
+      let isVisible = true;
+      if (f.visibleIf) {
+         const targetValue = form[f.visibleIf.field];
+         const conditionValue = f.visibleIf.contains || f.visibleIf.equals;
+         if (f.visibleIf.key) {
+            const nestedVal = targetValue?.[f.visibleIf.key];
+            if (nestedVal !== conditionValue) isVisible = false;
+         } else if (f.visibleIf.contains) {
+            if (!targetValue || !targetValue.includes(conditionValue)) isVisible = false;
+         } else if (f.visibleIf.equals) {
+            if (targetValue !== conditionValue) isVisible = false;
+         }
+      }
+
+      const isNonInput = f.type === 'info' || f.type === 'heading' || f.type === 'static_text';
+
+      if (isVisible && !isNonInput) {
         if (f.type === 'file') {
           if (!files[f.id]) {
             newErrors[f.id] = `${f.label} is required`;
@@ -245,6 +275,12 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
           if (val === undefined || val === "" || (Array.isArray(val) && val.length === 0)) {
             newErrors[f.id] = `${f.label} is required`;
             hasError = true;
+          } else if (f.type === 'phone' || f.id === 'phone' || f.id === 'mobile') {
+            const stripped = String(val).replace(/\D/g, '');
+            if (stripped.length !== 10) {
+              newErrors[f.id] = `${f.label} must be exactly 10 digits`;
+              hasError = true;
+            }
           }
         }
       }
@@ -295,9 +331,11 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
       const finalForm = { ...form, ...uploadedUrls };
 
       if (isManualEntry) {
+         const specCount = Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1;
+         const calculatedAmount = 2750 * specCount;
          setPaymentVerified({
            paymentId: finalForm.paymentUTR || ("MANUAL_ENTRY_" + Date.now()),
-           finalForm: { ...finalForm, paymentMode: "Manual Offline", paidAmount: 0 },
+           finalForm: { ...finalForm, paymentMode: "Manual Offline", paidAmount: calculatedAmount },
            verifyResponse: { success: true }
          });
          window.scrollTo(0, 0);
@@ -365,8 +403,20 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
   };
 
   const next = async () => {
+    const sections = formInfo?.sectionsConfig ? [...formInfo.sectionsConfig] : [];
+    if (isManualEntry && sections.length > 0 && sections[sections.length - 1].id !== 'manual_payment') {
+      sections.push({
+        id: 'manual_payment',
+        title: "Administrative Manual Payment",
+        description: "Enter offline payment details for this candidate.",
+        fields: [
+          { id: "paymentUTR", type: "text", label: "Payment Reference / UTR Number", required: true },
+          { id: "paymentUrl", type: "file", label: "Payment Screenshot", required: true }
+        ]
+      });
+    }
     if (!validateStep(step)) return;
-    if (step === (formInfo.sectionsConfig?.length || 0) - 1) {
+    if (step === sections.length - 1) {
       await handlePaymentAndSubmit();
       return;
     }
@@ -424,6 +474,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
         setSubmitted(true);
         // Clear draft on success
         localStorage.removeItem(`fellowship_draft_${token}`);
+        await clearDraft(token);
         window.scrollTo(0, 0);
       } catch (e: any) {
         setConfirmError(e.message);
@@ -439,17 +490,17 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle2 className="w-9 h-9 text-green-600" />
             </div>
-            <h2 className="text-2xl font-bold text-green-800 mb-1">Payment Successful!</h2>
+            <h2 className="text-2xl font-bold text-green-800 mb-1">{isManualEntry ? "Offline Registration Recorded!" : "Payment Successful!"}</h2>
             <p className="text-sm text-green-700">
-              Your payment of <strong>{isManualEntry ? "Rs. 0 (Manual Entry)" : (paymentConfig ? `${paymentConfig.currency} ${((paymentConfig.amount * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)) / 100).toLocaleString("en-IN")}` : `Rs. ${(2750 * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)).toLocaleString("en-IN")}`)}</strong> has been verified by Razorpay.
-              {!isManualEntry && Array.isArray(finalForm.specialization) && finalForm.specialization.length > 1 && ` (Rs. 2,750 x ${finalForm.specialization.length} specializations)`}
+              Your payment of <strong>{isManualEntry ? `Rs. ${(2750 * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)).toLocaleString("en-IN")} (Manual Offline)` : (paymentConfig ? `${paymentConfig.currency} ${((paymentConfig.amount * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)) / 100).toLocaleString("en-IN")}` : `Rs. ${(2750 * (Array.isArray(finalForm.specialization) ? finalForm.specialization.length : 1)).toLocaleString("en-IN")}`)}</strong> {isManualEntry ? "has been registered offline." : "has been verified by Razorpay."}
+              {Array.isArray(finalForm.specialization) && finalForm.specialization.length > 1 && ` (Rs. 2,750 x ${finalForm.specialization.length} specializations)`}
             </p>
           </div>
 
           <div className="bg-white border-2 border-orange-200 rounded-2xl p-6 shadow-md">
             <div className="flex items-center gap-2 mb-3">
               <CreditCard className="w-5 h-5 text-[#000080]" />
-              <span className="text-sm font-bold text-blue-900 uppercase tracking-wider">Your Razorpay Payment ID</span>
+              <span className="text-sm font-bold text-blue-900 uppercase tracking-wider">{isManualEntry ? "Offline Reference / UTR Number" : "Your Razorpay Payment ID"}</span>
             </div>
             <div className="bg-orange-50 border border-orange-300 rounded-xl px-4 py-3 flex items-center justify-between gap-3 mb-4">
               <code className="text-lg font-mono font-bold text-orange-700 tracking-wider select-all">{paymentId}</code>
@@ -459,7 +510,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
               >Copy</button>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
-              ⚠️ <strong>Save this Payment ID</strong> — you will need it for any future correspondence or refund requests. {isManualEntry ? "This is a system-generated ID for manual entries." : "It was also shown inside the Razorpay popup."}
+              ⚠️ <strong>Save this Reference</strong> — you will need it for any future correspondence or verification. {isManualEntry ? "This is the manual offline UTR number entered." : "It was also shown inside the Razorpay popup."}
             </p>
           </div>
 
@@ -588,8 +639,8 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                  <img src={logoUrl} alt="Logo" className="h-8 w-8 object-contain invert" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-slate-900 leading-none">{formInfo.title}</h1>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Application Process</p>
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 leading-tight font-outfit">{formInfo.title}</h1>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1 font-outfit">Sankara Fellowship Intake</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -623,14 +674,23 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
             <Card className="border-none shadow-2xl rounded-3xl overflow-hidden ">
               <div className="bg-white px-8 py-10 border-b border-slate-100">
                 <div className="flex items-center gap-3 mb-3">
-                   <h2 className="text-2xl font-bold text-slate-900 tracking-tight">{currentSection.title}</h2>
+                   <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight font-outfit">{currentSection.title}</h2>
                 </div>
                 {currentSection.description && (
                   <div 
-                    className="text-slate-600 leading-relaxed prose prose-sm max-w-none prose-slate opacity-80"
+                    className="text-slate-600 leading-relaxed prose prose-sm max-w-none prose-slate opacity-80 mb-4"
                     dangerouslySetInnerHTML={{ __html: currentSection.description }}
                   />
                 )}
+                <div className="p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-2xl flex items-start gap-3 shadow-sm">
+                  <AlertCircle className="w-5 h-5 text-orange-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-extrabold text-orange-950">All fields on this page are mandatory to be filled</p>
+                    <p className="text-xs text-orange-850 mt-1 font-semibold leading-relaxed">
+                      If any field is not applicable to your case (e.g. Spouse Details, Publications, Presentations, or previous attempts), you <span className="underline decoration-2">must</span> write <strong className="bg-orange-100/80 px-2 py-0.5 rounded text-orange-950 font-black">NA</strong> or <strong className="bg-orange-100/80 px-2 py-0.5 rounded text-orange-950 font-black">N/A</strong> or enter <strong className="bg-orange-100/80 px-2 py-0.5 rounded text-orange-950 font-black">0</strong>.
+                    </p>
+                  </div>
+                </div>
               </div>
           
           <CardContent className="p-6 md:p-8 space-y-8">
@@ -651,13 +711,41 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                return (
                  <div key={field.id} className="space-y-3">
                    {field.type !== 'info' && field.type !== 'heading' && field.type !== 'static_text' && (
-                     <Label className="text-sm font-bold text-slate-700 flex items-center gap-1">
+                     <Label className="text-[15px] font-bold text-slate-800 flex items-center gap-1.5 tracking-tight">
                        {field.label}
-                       {field.required && <span className="text-[#000080]">*</span>}
+                       <span className="text-red-500 font-extrabold">*</span>
                      </Label>
                    )}
 
-                  {field.type === 'info' && (
+                  {field.type === 'file' && (
+                     <div className={`relative border-2 border-dashed rounded-2xl p-10 transition-all ${files[field.id] ? 'border-emerald-400 bg-emerald-50/20' : errors[field.id] ? 'border-red-300 bg-red-50/20' : 'border-slate-200 hover:border-orange-500 hover:bg-orange-50/5 bg-slate-50/30'}`}>
+                       <input
+                         type="file"
+                         onChange={(e) => onFileChange(field.id, e.target.files?.[0] || null)}
+                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                         accept=".pdf,.jpg,.jpeg,.png"
+                       />
+                       <div className="text-center">
+                         {files[field.id] ? (
+                           <>
+                             <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                               <CheckCircle2 className="w-6 h-6 text-green-600" />
+                             </div>
+                             <p className="text-sm font-bold text-green-700">{files[field.id].name}</p>
+                             <p className="text-xs text-green-600 mt-1">File selected successfully</p>
+                           </>
+                         ) : (
+                           <>
+                             <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-3">
+                               <Loader2 className="w-6 h-6 text-slate-400" />
+                             </div>
+                             <p className="text-sm font-medium text-slate-600">Click to upload or drag & drop</p>
+                             <p className="text-xs text-slate-400 mt-1">PDF or Image (Max 10MB)</p>
+                           </>
+                         )}
+                       </div>
+                     </div>
+                  )}{field.type === 'info' && (
                       <div className="bg-blue-50 border-l-4 border-[#000080] p-6 rounded-r-xl shadow-sm">
                          <div className="flex items-start gap-4">
                            <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -690,7 +778,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                  {field.type === 'phone' && (
                    <div className="flex gap-2">
                      <div className="relative group">
-                       <div className="h-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 flex items-center gap-3 cursor-pointer hover:border-orange-300 transition-all shadow-sm">
+                       <div className="h-full px-5 py-4 rounded-2xl border-2 border-slate-200/80 bg-slate-50 flex items-center gap-3 cursor-pointer hover:border-orange-300 hover:bg-orange-50/20 transition-all shadow-sm">
                          <div className="w-6 h-6 rounded-full overflow-hidden border border-slate-200 flex-shrink-0 shadow-sm relative">
                            <div className="absolute inset-0 flex flex-col">
                              <div className="flex-1 bg-[#FF9933]"></div>
@@ -716,7 +804,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                          const val = e.target.value.replace(/\D/g, '').slice(0, 10);
                          set(field.id, val);
                        }}
-                       className={`flex-1 px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none font-medium tracking-wider`}
+                       className={`flex-1 px-5 py-4 rounded-2xl border-2 ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200/80 hover:border-slate-300'} focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 transition-all outline-none font-bold text-slate-800 text-[16px] tracking-widest`}
                        placeholder="10 digit mobile number"
                      />
                    </div>
@@ -728,7 +816,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
-                     placeholder={field.placeholder || field.label}
+                     placeholder={field.placeholder || `${field.label} (Put 'NA' if not applicable)`}
                    />
                  )}
 
@@ -748,7 +836,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                      onChange={(e) => set(field.id, e.target.value)}
                      rows={4}
                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
-                     placeholder={field.label}
+                     placeholder={field.placeholder || `${field.label} (Put 'NA' if not applicable)`}
                    />
                  )}
 
@@ -756,7 +844,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                    <select
                      value={form[field.id] || ""}
                      onChange={(e) => set(field.id, e.target.value)}
-                     className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none bg-white`}
+                     className={`w-full px-5 py-4 rounded-2xl border-2 ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200/80 hover:border-slate-300'} focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 transition-all outline-none bg-white font-medium text-slate-800 text-[15px]`}
                    >
                      <option value="">Select Option</option>
                      {field.options.map((opt: string) => (
@@ -817,12 +905,12 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                  {field.type === 'checkbox_group' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {field.options.map((opt: string) => (
-                        <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all ${form[field.id]?.includes(opt) ? 'border-[#000080] bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}>
+                        <label key={opt} className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all ${Array.isArray(form[field.id]) && form[field.id].includes(opt) ? 'border-[#000080] bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}>
                           <input
                             type="checkbox"
-                            checked={form[field.id]?.includes(opt)}
+                            checked={Array.isArray(form[field.id]) && form[field.id].includes(opt)}
                             onChange={(e) => {
-                               let current = form[field.id] || [];
+                               let current = Array.isArray(form[field.id]) ? [...form[field.id]] : [];
                                if (e.target.checked) {
                                   if (opt === "None of the Above") {
                                     current = [opt];
@@ -840,36 +928,6 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                           <span className="text-sm font-medium text-slate-700">{opt}</span>
                         </label>
                       ))}
-                    </div>
-                 )}
-
-                 {field.type === 'file' && (
-                    <div className={`relative border-2 border-dashed rounded-xl p-8 transition-all ${files[field.id] ? 'border-green-400 bg-green-50/30' : errors[field.id] ? 'border-red-300 bg-red-50/30' : 'border-slate-200 hover:border-[#000080] bg-slate-50/30'}`}>
-                      <input
-                        type="file"
-                        onChange={(e) => onFileChange(field.id, e.target.files?.[0] || null)}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                      />
-                      <div className="text-center">
-                        {files[field.id] ? (
-                          <>
-                            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                              <CheckCircle2 className="w-6 h-6 text-green-600" />
-                            </div>
-                            <p className="text-sm font-bold text-green-700">{files[field.id].name}</p>
-                            <p className="text-xs text-green-600 mt-1">File selected successfully</p>
-                          </>
-                        ) : (
-                          <>
-                            <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center mx-auto mb-3">
-                              <Loader2 className="w-6 h-6 text-slate-400" />
-                            </div>
-                            <p className="text-sm font-medium text-slate-600">Click to upload or drag & drop</p>
-                            <p className="text-xs text-slate-400 mt-1">PDF or Image (Max 10MB)</p>
-                          </>
-                        )}
-                      </div>
                     </div>
                  )}
 
@@ -971,7 +1029,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                                       set(field.id, { ...current, [row]: { ...rowData, supervision: parseInt(e.target.value) || 0 } });
                                     }}
                                     className="w-full px-3 py-2 text-center rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] outline-none transition-all font-medium"
-                                    placeholder="0"
+                                    placeholder="0 (Put '0' if not applicable)"
                                   />
                                 </td>
                                 <td className="px-6 py-4 bg-green-50/10">
@@ -1001,7 +1059,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
                       type="number"
                       value={form[field.id] || ""}
                       onChange={(e) => set(field.id, e.target.value)}
-                      className={`w-full px-4 py-3 rounded-lg border ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200'} focus:ring-2 focus:ring-blue-500/20 focus:border-[#000080] transition-all outline-none`}
+                      className={`w-full px-5 py-4 rounded-2xl border-2 ${errors[field.id] ? 'border-red-500 shadow-sm shadow-red-100' : 'border-slate-200/80 hover:border-slate-300'} focus:ring-4 focus:ring-orange-500/10 focus:border-orange-500 transition-all outline-none font-medium text-slate-800 text-[15px]`}
                       placeholder="0"
                     />
                  )}
@@ -1049,7 +1107,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
               variant="outline"
               onClick={prev}
               disabled={step === 0 || submitting}
-              className="h-12 px-6 border-slate-300 hover:bg-white font-semibold"
+              className="h-14 px-8 border-2 border-slate-200/80 hover:bg-slate-50 hover:border-slate-300 rounded-2xl text-slate-700 font-bold transition-all active:scale-[0.98] cursor-pointer font-outfit"
             >
               <ChevronLeft className="w-4 h-4 mr-2" /> Previous
             </Button>
@@ -1057,7 +1115,7 @@ export default function ApplyPage({ token, isManualEntry }: { token: string; isM
             <Button 
               onClick={next} 
               disabled={submitting}
-              className="bg-[#000080] hover:bg-blue-900 text-white px-8 py-6 rounded-xl flex items-center gap-2 text-lg font-bold transition-all shadow-lg shadow-orange-200 active:scale-95"
+              className="bg-[#000080] hover:bg-[#000066] text-white px-10 py-7 rounded-2xl flex items-center gap-2 text-[17px] font-extrabold transition-all shadow-xl shadow-blue-950/10 hover:shadow-2xl hover:shadow-blue-950/20 active:scale-[0.98] cursor-pointer font-outfit"
             >
               {submitting ? (
                 <>

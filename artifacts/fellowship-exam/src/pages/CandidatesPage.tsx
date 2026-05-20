@@ -33,6 +33,7 @@ interface Candidate {
   paymentInfo?: { amount: number | null; id: string | null; mode: string | null } | null;
   centerPreference?: string | null;
   submissionId?: number | null;
+  pgQualifications?: string | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -84,6 +85,54 @@ const SPEC_COLORS: Record<string, string> = {
   "Medical Retina": "bg-red-100 text-red-800",
   "Vitreo Retina": "bg-rose-100 text-rose-800",
 };
+
+function SecureFileLink({ url }: { url: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const fetchAndOpen = async () => {
+    if (!url) return;
+    if (!url.startsWith("/objects/")) {
+      window.open(url, "_blank");
+      return;
+    }
+    const servingUrl = `/api/storage${url}`;
+    const token = localStorage.getItem("fellowship_token");
+    setFetchError(null);
+    setLoading(true);
+    try {
+      const res = await fetch(servingUrl, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.target = "_blank";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+    } catch (e: any) {
+      setFetchError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-end">
+      <Button
+        variant="link"
+        size="sm"
+        className="text-xs text-orange-600 hover:underline p-0 h-auto flex items-center gap-1"
+        disabled={loading}
+        onClick={fetchAndOpen}
+      >
+        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+        {loading ? "Opening..." : "View"}
+      </Button>
+      {fetchError && <span className="text-[10px] text-red-500">{fetchError}</span>}
+    </div>
+  );
+}
 
 interface Panel { id: number; name: string; roomNumber: string; isActive: boolean; }
 
@@ -205,6 +254,7 @@ export default function CandidatesPage() {
 
   const [form, setForm] = useState({
     fullName: "", email: "", phone: "", gender: "", qualification: "", collegeName: "", address: "",
+    pgQualifications: "", centerPreference: "", specialityIds: [] as number[],
   });
 
   const { data: candidates = [], isLoading } = useQuery<Candidate[]>({
@@ -220,6 +270,11 @@ export default function CandidatesPage() {
   const { data: programs = [] } = useQuery<{ id: number; name: string }[]>({
     queryKey: ["programs"],
     queryFn: () => api.get("/programs"),
+  });
+
+  const { data: specialities = [] } = useQuery<{ id: number; name: string }[]>({
+    queryKey: ["specialities"],
+    queryFn: () => api.get("/specialities"),
   });
 
   const assignUnitMutation = useMutation({
@@ -240,7 +295,7 @@ export default function CandidatesPage() {
       toast({ title: "Candidate registered" });
       qc.invalidateQueries({ queryKey: ["candidates"] });
       setAddOpen(false);
-      setForm({ fullName: "", email: "", phone: "", gender: "", qualification: "", collegeName: "", address: "" });
+      setForm({ fullName: "", email: "", phone: "", gender: "", qualification: "", collegeName: "", address: "", pgQualifications: "", centerPreference: "", specialityIds: [] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -471,7 +526,7 @@ export default function CandidatesPage() {
               </Button>
             )}
             {canManage && (
-              <Select onValueChange={(v) => { if (v !== "none") window.open(`/apply/${v}`, "_blank"); }}>
+              <Select onValueChange={(v) => { if (v !== "none") window.open(`/application-forms/${v}/manual-entry`, "_blank"); }}>
                 <SelectTrigger className="bg-white text-[#0b4a8f] hover:bg-slate-50 transition-colors font-semibold h-10 px-4 rounded-lg shadow-sm border border-slate-200 w-40">
                   <div className="flex items-center gap-2">
                     <CheckCircle className="h-4 w-4" /> Manual Entry
@@ -785,37 +840,72 @@ export default function CandidatesPage() {
 
       {/* Add Candidate Dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Register Candidate</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-xl font-bold text-slate-900">Register Candidate</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-2">
             {[
               { field: "fullName", label: "Full Name", placeholder: "Dr. John Smith" },
               { field: "email", label: "Email", placeholder: "candidate@example.com" },
-              { field: "phone", label: "Phone", placeholder: "+91 9876543210" },
-              { field: "qualification", label: "Qualification", placeholder: "MBBS, MS Ophthalmology" },
-              { field: "collegeName", label: "College/Institution", placeholder: "" },
-              { field: "address", label: "Address", placeholder: "" },
+              { field: "phone", label: "Phone", placeholder: "10-digit mobile number" },
+              { field: "qualification", label: "Qualification (e.g. MBBS)", placeholder: "MBBS" },
+              { field: "pgQualifications", label: "PG Qualification (e.g. MS, DNB)", placeholder: "MS Ophthalmology, DNB" },
+              { field: "collegeName", label: "College/Institution", placeholder: "Medical College Name" },
+              { field: "centerPreference", label: "Center Preference", placeholder: "e.g. Bangalore, Chennai" },
+              { field: "address", label: "Address", placeholder: "Full permanent address" },
             ].map(({ field, label, placeholder }) => (
               <div key={field} className="space-y-1">
-                <Label>{label}</Label>
-                <Input placeholder={placeholder} value={form[field as keyof typeof form]} onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))} />
+                <Label className="text-sm font-semibold text-slate-700">{label}</Label>
+                <Input placeholder={placeholder} value={form[field as keyof typeof form] as string} onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))} className="h-10 rounded-lg text-sm font-medium border-slate-200 focus:border-orange-500 focus:ring-orange-500/10" />
               </div>
             ))}
             <div className="space-y-1">
-              <Label>Gender</Label>
+              <Label className="text-sm font-semibold text-slate-700">Gender</Label>
               <Select value={form.gender} onValueChange={(v) => setForm((f) => ({ ...f, gender: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select gender" /></SelectTrigger>
-                <SelectContent>
+                <SelectTrigger className="h-10 rounded-lg text-sm font-medium border-slate-200"><SelectValue placeholder="Select gender" /></SelectTrigger>
+                <SelectContent className="rounded-xl">
                   <SelectItem value="male">Male</SelectItem>
                   <SelectItem value="female">Female</SelectItem>
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1">
+              <Label className="text-sm font-semibold text-slate-700">Speciality Preferences</Label>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {specialities.map((spec: any) => {
+                  const selected = form.specialityIds.includes(spec.id);
+                  return (
+                    <button
+                      key={spec.id}
+                      type="button"
+                      onClick={() => {
+                        setForm((f) => {
+                          const exists = f.specialityIds.includes(spec.id);
+                          const specialityIds = exists
+                            ? f.specialityIds.filter((id) => id !== spec.id)
+                            : [...f.specialityIds, spec.id];
+                          return { ...f, specialityIds };
+                        });
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                        selected
+                          ? "bg-orange-100 text-orange-800 border-orange-300 shadow-sm"
+                          : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      {spec.name}
+                    </button>
+                  );
+                })}
+                {specialities.length === 0 && (
+                  <p className="text-xs text-muted-foreground italic">No specialities available</p>
+                )}
+              </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button onClick={() => addMutation.mutate(form)} disabled={addMutation.isPending || !form.fullName || !form.email}>
+          <DialogFooter className="pt-2">
+            <Button variant="outline" onClick={() => setAddOpen(false)} className="rounded-lg h-10 px-5">Cancel</Button>
+            <Button onClick={() => addMutation.mutate(form)} disabled={addMutation.isPending || !form.fullName || !form.email} className="bg-orange-500 hover:bg-orange-600 text-white rounded-lg h-10 px-5 border-none font-semibold">
               {addMutation.isPending ? "Registering…" : "Register"}
             </Button>
           </DialogFooter>
@@ -939,6 +1029,7 @@ export default function CandidatesPage() {
                 ["Date of Birth", viewCandidate.dateOfBirth ?? "—"],
                 ["Gender", viewCandidate.gender ?? "—"],
                 ["Qualification", viewCandidate.qualification ?? "—"],
+                ["PG Qualification", viewCandidate.pgQualifications ?? "—"],
                 ["College", viewCandidate.collegeName ?? "—"],
                 ["Address", viewCandidate.address ?? "—"],
                 ["Status", viewCandidate.status.replace(/_/g, " ")],
@@ -969,14 +1060,7 @@ export default function CandidatesPage() {
                       <div key={doc.id} className="flex items-center justify-between gap-2">
                         <span className="text-xs text-muted-foreground">{doc.docType}</span>
                         {doc.fileUrl ? (
-                          <a
-                            href={doc.fileUrl.startsWith("/objects/") ? `/api/storage${doc.fileUrl}` : doc.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-orange-600 hover:underline flex items-center gap-1"
-                          >
-                            <ExternalLink className="h-3 w-3" /> View
-                          </a>
+                          <SecureFileLink url={doc.fileUrl} />
                         ) : (
                           <span className="text-xs text-muted-foreground italic">No file</span>
                         )}

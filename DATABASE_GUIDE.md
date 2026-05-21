@@ -121,3 +121,38 @@ crontab -e
 ## Troubleshooting
 - **Connection Refused:** Ensure PostgreSQL is configured to allow remote connections (`pg_hba.conf`) if restoring from a remote machine.
 - **Drizzle Sync:** If the schema seems out of sync, run `pnpm --filter @workspace/db drizzle-kit check` to verify consistency.
+
+---
+
+## 7. May 2026 Update (v1.0.6 Release) - Database Alignment
+
+This update introduces the manual candidate stepped registration, Daily Reports, corrected payment multipliers, and PDF enhancements. To apply this update to a live/production database (e.g., `learn.sankaraeye.in`) without losing any existing application submissions or candidate data, perform the following two steps.
+
+### Step 7.1: Add Missing Columns to the `candidates` Table
+Run the following SQL commands on your PostgreSQL database to add the required columns for candidate score tracking:
+
+```sql
+-- Ensure mcq_score and psychometric_score columns exist in the candidates table
+ALTER TABLE "candidates" ADD COLUMN IF NOT EXISTS "mcq_score" text;
+ALTER TABLE "candidates" ADD COLUMN IF NOT EXISTS "psychometric_score" text;
+```
+
+### Step 7.2: Run the Historical Candidate Preferences Sync Script
+Historically, candidates approved with multiple specializations (e.g., `{"Cornea", "Phaco Refractive"}`) might have missing entries in the `candidate_preferences` table due to array-formatting mismatches in older versions. We have created a robust, non-destructive synchronization script that will populate this retroactively without any loss of live data.
+
+1. **Verify Connection String:**
+   Open the sync script: `artifacts/api-server/scratch/sync_preferences.mjs`.
+   Ensure line 46 contains the correct connection string matching your server database credentials:
+   ```javascript
+   const connectionString = "postgresql://username:password@localhost:5432/your_database_name";
+   ```
+   *(Alternatively, you can modify it to read from `process.env.DATABASE_URL`).*
+
+2. **Execute the Script:**
+   From the root of the project (or inside `artifacts/api-server`), run:
+   ```bash
+   node artifacts/api-server/scratch/sync_preferences.mjs
+   ```
+
+This will output the number of records fixed and synchronized. The synchronizer is idempotent and safe to run multiple times.
+

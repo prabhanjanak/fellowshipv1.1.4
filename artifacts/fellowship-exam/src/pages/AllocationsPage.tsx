@@ -116,7 +116,7 @@ export default function AllocationsPage() {
     stipend: "45000",
     stipend_words: "Forty Five Thousand",
     reporting_doctor: "Dr. Kaushik Murali",
-    signing_authority: "Dr. Kaushik Murali",
+    signing_authority: "Dr. Kaushik Murali, President Medical Operations, Sankara Eye Hospital, Sankara Eye Foundation India",
     unit: "",
     specialization: ""
   });
@@ -980,6 +980,17 @@ export default function AllocationsPage() {
               <div className="space-y-3">
                 <Label className="text-[11px] font-black uppercase text-slate-500 tracking-widest ml-1">Induction Protocol Period</Label>
                 <Input value={offerDetails.induction_dates} onChange={e => setOfferDetails({ ...offerDetails, induction_dates: e.target.value })} className="font-black h-14 text-sm rounded-2xl border-2 px-6 focus:ring-primary" placeholder="e.g., July 1st to July 5th, 2026" />
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-[11px] font-black uppercase text-slate-500 tracking-widest ml-1">Signing Authority</Label>
+                <Input 
+                  value={offerDetails.signing_authority} 
+                  onChange={e => setOfferDetails({ ...offerDetails, signing_authority: e.target.value })} 
+                  className="font-black h-14 text-sm rounded-2xl border-2 px-6 focus:ring-primary" 
+                  placeholder="e.g., Dr. Kaushik Murali, President Medical Operations" 
+                />
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">This name/title will appear on the allocation letter</p>
               </div>
             </div>
 

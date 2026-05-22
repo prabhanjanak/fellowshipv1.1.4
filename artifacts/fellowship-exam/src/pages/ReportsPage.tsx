@@ -18,6 +18,9 @@ import {
   Cell,
   PieChart,
   Pie,
+  AreaChart,
+  Area,
+  Legend,
 } from "recharts";
 import {
   Loader2,
@@ -27,43 +30,76 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
-  Filter,
+  Calendar,
+  Percent,
+  TrendingDown,
+  Info,
+  CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
-import { Button } from "../components/ui/button";
+import { motion, Variants } from "framer-motion";
 
-const COLORS = ["#f97316", "#fbbf24", "#ea580c", "#fb923c", "#fcd34d", "#78350f"];
+interface ReportsStats {
+  kpis: {
+    totalApplicants: number;
+    totalApproved: number;
+    totalAllocated: number;
+    totalPending: number;
+    totalRevenue: number;
+    conversionRate: number;
+  };
+  bySpecialization: Array<{
+    id: number;
+    name: string;
+    code: string;
+    seats: number;
+    applicants: number;
+    allocated: number;
+    fillRate: number;
+  }>;
+  statusBreakdown: Array<{ name: string; value: number }>;
+  timelineData: Array<{ date: string; count: number }>;
+  scoreAverages: Array<{
+    specialization: string;
+    mcq: number;
+    psychometric: number;
+    interview: number;
+  }>;
+  recentAlerts: Array<{ type: string; message: string }>;
+}
+
+const DONUT_COLORS: Record<string, string> = {
+  "Pending Review": "#fb923c", // Orange
+  "Screening Passed": "#3b82f6", // Blue
+  "Rejected": "#ef4444", // Red
+  "Allocated": "#10b981", // Emerald
+  "Waitlisted": "#a855f7", // Purple
+};
+
+const CHART_COLORS = ["#f97316", "#3b82f6", "#10b981", "#fb923c", "#a855f7"];
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+    },
+  },
+};
+
+const itemVariants: Variants = {
+  hidden: { y: 20, opacity: 0 },
+  show: { y: 0, opacity: 1, transition: { type: "spring" as const, stiffness: 300, damping: 24 } },
+};
 
 export default function ReportsPage() {
-  const { data: batches = [], isLoading: loadingBatches } = useQuery({ 
-    queryKey: ["batches"],
-    queryFn: () => api.get<any[]>("/batches")
+  const { data: stats, isLoading, error } = useQuery<ReportsStats>({
+    queryKey: ["reports-stats"],
+    queryFn: () => api.get<ReportsStats>("/reports/stats"),
   });
-  const { data: candidates = [], isLoading: loadingCandidates } = useQuery({ 
-    queryKey: ["candidates"],
-    queryFn: () => api.get<any[]>("/candidates")
-  });
-
-  if (loadingBatches || loadingCandidates) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  // Stats calculation
-  const totalCandidates = candidates.length;
-  const totalBatches = batches.length;
-  const approvedCount = candidates.filter((c: any) => c.status === "approved").length;
-  
-  // Chart data: Candidates per batch
-  const batchData = batches.map((b: any) => ({
-    name: b.name.split('-')[0].trim(),
-    candidates: b.candidateCount || 0,
-    avgScore: (Math.random() * 20 + 70).toFixed(1), // Mock avg score for now
-  }));
 
   const downloadCycleReport = async () => {
     try {
@@ -97,179 +133,336 @@ export default function ReportsPage() {
     }
   };
 
-  if (loadingBatches || loadingCandidates) {
+  if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex items-center justify-center min-h-[500px]">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-10 w-10 animate-spin text-orange-600" />
+          <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest animate-pulse">
+            Analyzing Admissions Data...
+          </p>
+        </div>
       </div>
     );
   }
 
-  const statusData = [
-    { name: "Approved", value: approvedCount },
-    { name: "Pending", value: candidates.length - approvedCount },
-  ];
+  if (error || !stats) {
+    return (
+      <div className="flex items-center justify-center min-h-[500px]">
+        <div className="text-center p-8 bg-red-50 rounded-2xl max-w-md border border-red-100">
+          <AlertCircle className="h-12 w-12 text-red-600 mx-auto mb-4" />
+          <h2 className="text-lg font-bold text-red-900 mb-2">Failed to Load Report Data</h2>
+          <p className="text-sm text-red-700">
+            There was an error communicating with the API server. Please ensure the backend is running and try again.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const { kpis, bySpecialization, statusBreakdown, timelineData, scoreAverages, recentAlerts } = stats;
 
   return (
-    <div className="p-6 space-y-6">
+    <motion.div
+      variants={containerVariants}
+      initial="hidden"
+      animate="show"
+      className="p-6 space-y-6"
+    >
+      {/* Header Section */}
       <div className="flex justify-between items-center flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Analytics & Reports</h1>
-          <p className="text-muted-foreground">Comprehensive insights into candidate performance and recruitment status.</p>
+          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 via-orange-950 to-orange-800 bg-clip-text text-transparent">
+            Analytics & Reports
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Real-time insights, academic scores, entrance performance metrics, and seat allocations.
+          </p>
         </div>
-        <div className="flex gap-4 items-center flex-wrap">
-            <button 
-              onClick={downloadCycleReport}
-              className="inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:scale-[1.02] active:scale-[0.98] border-none min-h-9 px-6 py-2 w-72 h-14 rounded-2xl orange-gradient text-white font-black uppercase tracking-widest text-[11px] shadow-xl shadow-orange-500/20"
-            >
-              <FileText className="h-4 w-4" /> Download Cycle Report
-            </button>
-            <button 
-              onClick={downloadDailyReport}
-              className="inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 hover:scale-[1.02] active:scale-[0.98] border-none min-h-9 px-6 py-2 w-72 h-14 rounded-2xl premium-gradient text-white font-black uppercase tracking-widest text-[11px] shadow-xl shadow-slate-900/20"
-            >
-              <FileText className="h-4 w-4" /> Download Daily Report
-            </button>
-           <div className="hidden md:flex gap-2">
-              <Badge variant="outline" className="px-3 py-1 gap-1.5 bg-white shadow-sm h-10">
-                <Filter className="h-3.5 w-3.5" /> Filter Range
-              </Badge>
-           </div>
+        <div className="flex gap-3 items-center flex-wrap">
+          <button
+            onClick={downloadCycleReport}
+            className="inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:pointer-events-none disabled:opacity-50 hover:scale-[1.02] active:scale-[0.98] border-none min-h-9 px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white font-black uppercase tracking-widest text-[11px] shadow-lg shadow-orange-500/20"
+          >
+            <FileText className="h-4 w-4" /> Download Cycle Report
+          </button>
+          <button
+            onClick={downloadDailyReport}
+            className="inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 disabled:pointer-events-none disabled:opacity-50 hover:scale-[1.02] active:scale-[0.98] border border-slate-200 min-h-9 px-5 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 font-black uppercase tracking-widest text-[11px] shadow-sm"
+          >
+            <Calendar className="h-4 w-4 text-orange-600" /> Download Daily Report
+          </button>
         </div>
       </div>
 
-      {/* KPI Stats */}
+      {/* KPI Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {[
-          { label: "Total Applications", value: totalCandidates, icon: Users, color: "text-orange-600", bg: "bg-orange-50" },
-          { label: "Active Batches", value: totalBatches, icon: TrendingUp, color: "text-amber-600", bg: "bg-amber-50" },
-          { label: "Final Selections", value: approvedCount, icon: CheckCircle2, color: "text-emerald-600", bg: "bg-emerald-50" },
-          { label: "Completion Rate", value: "84%", icon: Award, color: "text-orange-600", bg: "bg-orange-50" },
+          {
+            label: "Total Applicants",
+            value: kpis.totalApplicants,
+            icon: Users,
+            color: "text-orange-600",
+            bg: "bg-orange-50/50",
+            border: "border-orange-100/50",
+            desc: "Unique registered applicants",
+          },
+          {
+            label: "Allotted Selections",
+            value: kpis.totalAllocated,
+            icon: Award,
+            color: "text-emerald-600",
+            bg: "bg-emerald-50/50",
+            border: "border-emerald-100/50",
+            desc: `Conversion Rate: ${kpis.conversionRate}%`,
+          },
+          {
+            label: "Awaiting Review",
+            value: kpis.totalPending,
+            icon: AlertCircle,
+            color: "text-amber-600",
+            bg: "bg-amber-50/50",
+            border: "border-amber-100/50",
+            desc: "Applications in pending review",
+          },
+          {
+            label: "Total Revenue",
+            value: `₹${kpis.totalRevenue.toLocaleString("en-IN")}`,
+            icon: Percent,
+            color: "text-blue-600",
+            bg: "bg-blue-50/50",
+            border: "border-blue-100/50",
+            desc: "Application fees received",
+          },
         ].map((stat, i) => (
-          <Card key={i} className="overflow-hidden">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
-                  <p className={`text-3xl font-bold mt-1 ${stat.color}`}>{stat.value}</p>
+          <motion.div key={i} variants={itemVariants}>
+            <Card className={`overflow-hidden border shadow-sm hover:shadow-md transition-shadow ${stat.border}`}>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest">{stat.label}</p>
+                    <p className={`text-3xl font-extrabold mt-2 ${stat.color}`}>{stat.value}</p>
+                    <p className="text-xs text-slate-400 font-medium mt-1">{stat.desc}</p>
+                  </div>
+                  <div className={`p-3.5 rounded-2xl ${stat.bg}`}>
+                    <stat.icon className={`h-6 w-6 ${stat.color}`} />
+                  </div>
                 </div>
-                <div className={`p-3 rounded-xl ${stat.bg}`}>
-                  <stat.icon className={`h-6 w-6 ${stat.color}`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </motion.div>
         ))}
       </div>
 
+      {/* Dynamic Smart Database Alerts */}
+      <motion.div variants={itemVariants}>
+        <Card className="border-orange-100/60 bg-gradient-to-br from-orange-50/10 to-amber-50/20">
+          <CardHeader className="py-4">
+            <CardTitle className="text-sm font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-orange-600" /> Operational Insights & Action Items
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-5">
+            {recentAlerts.map((alert, index) => {
+              const Icon = alert.type === "critical" ? AlertCircle : alert.type === "warning" ? AlertTriangle : alert.type === "success" ? CheckCircle : Info;
+              const badgeVariant = alert.type === "critical" ? "destructive" : alert.type === "warning" ? "secondary" : "outline";
+              return (
+                <div key={index} className="p-3 bg-white rounded-xl border border-slate-100 flex items-start gap-3 shadow-sm hover:shadow-md transition-all">
+                  <div className={`p-1.5 rounded-lg mt-0.5 ${alert.type === "critical" ? "bg-red-50 text-red-600" : alert.type === "warning" ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600"}`}>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <Badge variant={badgeVariant} className="text-[9px] uppercase tracking-widest font-black mb-1">
+                      {alert.type}
+                    </Badge>
+                    <p className="text-xs text-slate-700 font-semibold leading-relaxed">
+                      {alert.message}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Row 1 Charts */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Main Chart */}
-        <Card className="md:col-span-2 shadow-lg shadow-slate-200/50">
-          <CardHeader>
-            <CardTitle className="text-lg">Candidates per Batch</CardTitle>
-            <CardDescription>Distribution of applicants across different examination groups.</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[350px] pt-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={batchData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
-                <Tooltip 
-                  cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)' }}
-                />
-                <Bar dataKey="candidates" radius={[6, 6, 0, 0]}>
-                  {batchData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Status Distribution */}
-        <Card className="shadow-lg shadow-slate-200/50">
-          <CardHeader>
-            <CardTitle className="text-lg">Application Status</CardTitle>
-            <CardDescription>Breakdown of current selection stage.</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[250px] flex flex-col justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusData}
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {statusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={index === 0 ? "#10b981" : "#e2e8f0"} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-4 space-y-2">
-               <div className="flex justify-between items-center text-sm">
-                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Approved</div>
-                 <span className="font-bold">{approvedCount}</span>
-               </div>
-               <div className="flex justify-between items-center text-sm">
-                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-slate-200" /> Pending Review</div>
-                 <span className="font-bold">{candidates.length - approvedCount}</span>
-               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-         {/* Performance Benchmarks */}
-         <Card>
-           <CardHeader>
-             <CardTitle className="text-lg">Batch Average Scores</CardTitle>
-             <CardDescription>Average performance metrics per component.</CardDescription>
-           </CardHeader>
-           <CardContent className="space-y-6">
-             {batches.slice(0, 4).map((b: any, i: number) => (
-               <div key={b.id} className="space-y-2">
-                 <div className="flex justify-between text-sm">
-                   <span className="font-medium">{b.name}</span>
-                   <span className="text-emerald-600 font-bold">Avg: {78 + i}%</span>
-                 </div>
-                 <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                   <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${78 + i}%` }} />
-                 </div>
-               </div>
-             ))}
-           </CardContent>
-         </Card>
-
-         {/* Alerts / Notifications */}
-         <Card className="border-orange-100 bg-orange-50/20">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2 text-orange-900">
-                <AlertCircle className="h-5 w-5" /> Pending Actions
-              </CardTitle>
+        {/* Speciality Seat Metrics (Bar Chart) */}
+        <motion.div variants={itemVariants} className="md:col-span-2">
+          <Card className="shadow-sm border border-slate-100">
+            <CardHeader className="flex flex-row justify-between items-center">
+              <div>
+                <CardTitle className="text-lg font-bold text-slate-800">Specialization Seat Fill Rate</CardTitle>
+                <CardDescription>Visual comparison of Applicants vs Allotted Selections vs Available Seats.</CardDescription>
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-               <div className="p-3 bg-white rounded-lg border border-orange-100 flex items-center gap-3">
-                  <Badge variant="destructive" className="h-5">Critical</Badge>
-                  <p className="text-xs text-slate-700 font-medium">Batch #4 requires doctor scores for 12 candidates.</p>
-               </div>
-               <div className="p-3 bg-white rounded-lg border border-orange-100 flex items-center gap-3">
-                  <Badge className="h-5 bg-orange-400">Notice</Badge>
-                  <p className="text-xs text-slate-700 font-medium">6 Offer letters pending template assignment.</p>
-               </div>
-               <Separator />
-               <Button variant="link" className="text-orange-600 text-xs h-auto p-0 font-bold">View all alerts →</Button>
+            <CardContent className="h-[360px] pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={bySpecialization} barGap={4}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: '1px solid #f1f5f9', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.05)' }}
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                  <Bar dataKey="applicants" name="Applicants" fill="#f97316" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="allocated" name="Allotted Selections" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="seats" name="Seat Capacity" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
-         </Card>
+          </Card>
+        </motion.div>
+
+        {/* Status Distribution (Pie Chart) */}
+        <motion.div variants={itemVariants}>
+          <Card className="shadow-sm border border-slate-100 h-full flex flex-col">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold text-slate-800">Application Pipeline</CardTitle>
+              <CardDescription>Conversion stages breakdown.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col justify-center pb-6">
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={statusBreakdown}
+                      innerRadius={65}
+                      outerRadius={85}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {statusBreakdown.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={DONUT_COLORS[entry.name] || "#94a3b8"} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 space-y-2 max-w-[280px] mx-auto w-full">
+                {statusBreakdown.map((item, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: DONUT_COLORS[item.name] || "#94a3b8" }} />
+                      <span className="text-slate-600 font-medium">{item.name}</span>
+                    </div>
+                    <span className="font-extrabold text-slate-800">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
-    </div>
+
+      {/* Row 2 Charts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Timeline of Submissions (Area Chart) */}
+        <motion.div variants={itemVariants}>
+          <Card className="shadow-sm border border-slate-100">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold text-slate-800">Application Submission Trend</CardTitle>
+              <CardDescription>Historical application volume (last 15 active days).</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[300px] pt-4">
+              {timelineData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={timelineData}>
+                    <defs>
+                      <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f97316" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#f97316" stopOpacity={0.0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                    <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9' }} />
+                    <Area type="monotone" dataKey="count" name="Applications" stroke="#f97316" strokeWidth={2} fillOpacity={1} fill="url(#colorCount)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+                  No submissions recorded yet.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Average Test Scores by Specialization (Bar Chart) */}
+        <motion.div variants={itemVariants}>
+          <Card className="shadow-sm border border-slate-100">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold text-slate-800">Academic Score Benchmarks</CardTitle>
+              <CardDescription>Specialty performance comparing MCQ, Psychometric & Interview averages.</CardDescription>
+            </CardHeader>
+            <CardContent className="h-[300px] pt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={scoreAverages} barGap={2}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="specialization" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} domain={[0, 100]} />
+                  <Tooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                  <Bar dataKey="mcq" name="MCQ Average" fill="#f97316" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="psychometric" name="Psychometric Average" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="interview" name="Interview Average" fill="#10b981" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+
+      {/* Row 3 - Seat Matrix Detailed breakdown Table */}
+      <motion.div variants={itemVariants}>
+        <Card className="shadow-sm border border-slate-100">
+          <CardHeader>
+            <CardTitle className="text-lg font-bold text-slate-800">Specialization Matrix & Allocation Breakdown</CardTitle>
+            <CardDescription>Comprehensive seat distribution and allocation metrics.</CardDescription>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-400 font-black uppercase tracking-widest text-[10px] bg-slate-50/50">
+                  <th className="py-3 px-4">Code</th>
+                  <th className="py-3 px-4">Specialization</th>
+                  <th className="py-3 px-4 text-center">Applicants</th>
+                  <th className="py-3 px-4 text-center">Allotted Selections</th>
+                  <th className="py-3 px-4 text-center">Total Seats</th>
+                  <th className="py-3 px-4">Seat Fill Progress</th>
+                  <th className="py-3 px-4 text-right">Fill Rate</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50 text-slate-700 text-sm font-semibold">
+                {bySpecialization.map((spec) => {
+                  const progressColor = spec.fillRate >= 80 ? "bg-emerald-500" : spec.fillRate >= 40 ? "bg-amber-500" : "bg-slate-300";
+                  return (
+                    <tr key={spec.id} className="hover:bg-slate-50/30 transition-colors">
+                      <td className="py-3.5 px-4 font-mono text-xs text-orange-600">{spec.code}</td>
+                      <td className="py-3.5 px-4 text-slate-900">{spec.name}</td>
+                      <td className="py-3.5 px-4 text-center text-slate-500">{spec.applicants}</td>
+                      <td className="py-3.5 px-4 text-center text-emerald-600 font-bold">{spec.allocated}</td>
+                      <td className="py-3.5 px-4 text-center text-slate-900">{spec.seats}</td>
+                      <td className="py-3.5 px-4 min-w-[150px]">
+                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full ${progressColor}`} style={{ width: `${Math.min(spec.fillRate, 100)}%` }} />
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-right text-slate-900 font-extrabold">{spec.fillRate}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      </motion.div>
+    </motion.div>
   );
 }
-

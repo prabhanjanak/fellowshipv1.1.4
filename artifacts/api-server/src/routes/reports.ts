@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { db, applicationSubmissionsTable, candidatesTable, usersTable, interviewScoresTable, allocationsTable, programsTable, unitsTable } from "@workspace/db";
+import { db, applicationSubmissionsTable, candidatesTable, usersTable, interviewScoresTable, allocationsTable, programsTable, unitsTable, specialitiesTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth";
 import * as XLSX from "xlsx";
-import { formatDOBToStandard } from "../lib/utils";
+import { formatDOBToStandard, parseSpecializationString } from "../lib/utils";
 
 const router: Router = Router();
 
@@ -271,6 +271,175 @@ router.get("/reports/daily-report", requireAuth, requireRole("super_admin", "pro
   } catch (error: any) {
     console.error("[daily-report] error:", error);
     res.status(500).json({ error: "Failed to generate daily report", details: error.message });
+  }
+});
+
+router.get("/reports/stats", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req: any, res) => {
+  try {
+    const isMock = req.isMockMode || false;
+
+    // 1. Fetch data
+    const submissions = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
+    const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
+    const specialities = await db.select().from(specialitiesTable);
+    const allocations = await db.select().from(allocationsTable);
+    const scores = await db.select().from(interviewScoresTable);
+
+    const candidateIds = new Set(candidates.map(c => c.id));
+
+    // Filter allocations and scores to keep only relevant candidates if mock
+    const activeAllocations = allocations.filter(a => candidateIds.has(a.candidateId));
+    const activeScores = scores.filter(s => candidateIds.has(s.candidateId));
+
+    // 2. Compute KPIs
+    const nonDraftSubmissions = submissions.filter(s => !s.saveAsDraft);
+    const uniqueEmails = new Set(nonDraftSubmissions.map(s => s.email.toLowerCase().trim()));
+    const totalApplicants = uniqueEmails.size;
+
+    const totalPending = nonDraftSubmissions.filter(s => s.status === "pending").length;
+    const totalApproved = nonDraftSubmissions.filter(s => s.status === "approved").length;
+    const totalAllocated = activeAllocations.filter(a => a.status === "SELECTED").length;
+
+    const totalRevenue = nonDraftSubmissions.reduce((acc, s) => {
+      if (s.paidAmount) {
+        const amt = s.paidAmount > 100000 ? s.paidAmount / 100 : s.paidAmount;
+        return acc + amt;
+      }
+      return acc;
+    }, 0);
+
+    const conversionRate = totalApplicants > 0 ? Math.round((totalAllocated / totalApplicants) * 100) : 0;
+
+    // 3. Specialization Chart Data
+    const bySpecialization = specialities.map(spec => {
+      // Count submissions with this specialization
+      const specApplicants = nonDraftSubmissions.filter(s => {
+        const specs = parseSpecializationString(s.specialization);
+        return specs.some(sp => sp.toLowerCase() === spec.name.toLowerCase());
+      }).length;
+
+      // Count allocations
+      const specAllocated = activeAllocations.filter(a => a.specialityId === spec.id && a.status === "SELECTED").length;
+
+      return {
+        id: spec.id,
+        name: spec.name,
+        code: spec.code,
+        seats: spec.seats,
+        applicants: specApplicants,
+        allocated: specAllocated,
+        fillRate: spec.seats > 0 ? Math.round((specAllocated / spec.seats) * 100) : 0
+      };
+    });
+
+    // 4. Status Breakdown
+    const statusBreakdown = [
+      { name: "Pending Review", value: totalPending },
+      { name: "Screening Passed", value: totalApproved },
+      { name: "Rejected", value: nonDraftSubmissions.filter(s => s.status === "rejected").length },
+      { name: "Allocated", value: totalAllocated },
+      { name: "Waitlisted", value: candidates.filter(c => c.status === "waitlisted").length }
+    ];
+
+    // 5. Timeline data (last 15 active days)
+    const submissionsByDate: Record<string, number> = {};
+    nonDraftSubmissions.forEach(s => {
+      if (s.submittedAt) {
+        const dateKey = new Date(s.submittedAt).toISOString().split('T')[0];
+        submissionsByDate[dateKey] = (submissionsByDate[dateKey] ?? 0) + 1;
+      }
+    });
+
+    const sortedDates = Object.keys(submissionsByDate).sort();
+    const timelineData = sortedDates.map(dateKey => {
+      const [year, month, day] = dateKey.split('-');
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const formattedDate = `${parseInt(day)} ${months[parseInt(month) - 1]}`;
+      return {
+        date: formattedDate,
+        count: submissionsByDate[dateKey]
+      };
+    }).slice(-15);
+
+    // 6. Score Averages by Specialization
+    const scoreAverages = specialities.map(spec => {
+      const specCandidates = candidates.filter(c => {
+        const sub = nonDraftSubmissions.find(s => s.email.toLowerCase().trim() === c.email.toLowerCase().trim());
+        if (!sub) return false;
+        const specs = parseSpecializationString(sub.specialization);
+        return specs.some(sp => sp.toLowerCase() === spec.name.toLowerCase());
+      });
+
+      const mcqScores = specCandidates.map(c => parseFloat(c.mcqScore || "")).filter(s => !isNaN(s));
+      const psychScores = specCandidates.map(c => parseFloat(c.psychometricScore || "")).filter(s => !isNaN(s));
+      
+      const interviewCandIds = new Set(specCandidates.map(c => c.id));
+      const candInterviewScores = activeScores.filter(s => interviewCandIds.has(s.candidateId)).map(s => s.score);
+
+      const avgMcq = mcqScores.length > 0 ? Math.round(mcqScores.reduce((a, b) => a + b, 0) / mcqScores.length) : 0;
+      const avgPsych = psychScores.length > 0 ? Math.round(psychScores.reduce((a, b) => a + b, 0) / psychScores.length) : 0;
+      const avgInterview = candInterviewScores.length > 0 ? Math.round(candInterviewScores.reduce((a, b) => a + b, 0) / candInterviewScores.length) : 0;
+
+      return {
+        specialization: spec.name,
+        mcq: avgMcq,
+        psychometric: avgPsych,
+        interview: avgInterview
+      };
+    });
+
+    // 7. Dynamic smart alerts
+    const alerts = [];
+    const missingScores = candidates.filter(c => c.status === "approved" && (!c.mcqScore || !c.psychometricScore)).length;
+    if (missingScores > 0) {
+      alerts.push({
+        type: "warning",
+        message: `${missingScores} approved candidates are missing MCQ or Psychometric scores.`
+      });
+    }
+
+    const pendingInterviews = candidates.filter(c => c.status === "approved" && !activeScores.some(s => s.candidateId === c.id)).length;
+    if (pendingInterviews > 0) {
+      alerts.push({
+        type: "critical",
+        message: `${pendingInterviews} approved candidates do not have interview scores recorded.`
+      });
+    }
+
+    const unallocatedCandidates = candidates.filter(c => c.status === "interview_completed" && !activeAllocations.some(a => a.candidateId === c.id)).length;
+    if (unallocatedCandidates > 0) {
+      alerts.push({
+        type: "notice",
+        message: `${unallocatedCandidates} candidates have completed interviews and are ready for seat allocation.`
+      });
+    }
+
+    if (alerts.length === 0) {
+      alerts.push({
+        type: "success",
+        message: "All candidate evaluations and seat allocations are up to date!"
+      });
+    }
+
+    res.json({
+      kpis: {
+        totalApplicants,
+        totalApproved,
+        totalAllocated,
+        totalPending,
+        totalRevenue,
+        conversionRate
+      },
+      bySpecialization,
+      statusBreakdown,
+      timelineData,
+      scoreAverages,
+      recentAlerts: alerts
+    });
+
+  } catch (error: any) {
+    console.error("[reports-stats] error:", error);
+    res.status(500).json({ error: "Failed to load reports statistics", details: error.message });
   }
 });
 

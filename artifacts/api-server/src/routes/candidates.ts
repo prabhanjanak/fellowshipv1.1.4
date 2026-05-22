@@ -932,28 +932,37 @@ router.get("/candidates/:id/summary-pdf", requireAuth, async (req, res) => {
 
     // --- Header ---
     const logoPath = path.join(process.cwd(), 'artifacts', 'fellowship-exam', 'src', 'assets', 'seh_sav_logo_1777703794142.jpg');
+    let logoLoaded = false;
     try {
-      doc.image(logoPath, 50, 45, { width: 120 });
+      doc.image(logoPath, 50, 40, { width: 130, height: 65 });
+      logoLoaded = true;
     } catch (e) {
-      doc.fillColor(colors.accent).font('Helvetica-Bold').fontSize(16).text("SANKARA ACADEMY OF VISION", 50, 50);
+      // Logo not found - render text fallback
+      doc.fillColor(colors.accent).font('Helvetica-Bold').fontSize(14).text("SANKARA ACADEMY OF VISION", 50, 50);
     }
 
-    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(18).text("CANDIDATE DOSSIER", 350, 50, { align: 'right' });
-    doc.fillColor(colors.secondary).font('Helvetica').fontSize(10).text(`Protocol ID: ${c.candidateCode}`, 350, 75, { align: 'right' });
+    // Header text - Institution info on right side
+    doc.fillColor(colors.primary).font('Helvetica-Bold').fontSize(16).text("CANDIDATE DOSSIER", 0, 45, { align: 'right', width: 545 });
+    doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text("Sankara Academy of Vision — Fellowship Admissions", 0, 65, { align: 'right', width: 545 });
+    doc.fillColor(colors.secondary).font('Helvetica').fontSize(9).text(`Protocol ID: ${c.candidateCode}`, 0, 78, { align: 'right', width: 545 });
+
+    // Header rule
+    doc.strokeColor(colors.accent).lineWidth(2).moveTo(50, 112).lineTo(550, 112).stroke();
 
     // --- Photo ---
     const photoUrl = sub?.photoUrl;
     if (photoUrl && photoUrl.startsWith("/objects/")) {
       const localPath = path.join(process.cwd(), "uploads", photoUrl.replace("/objects/", ""));
       try {
-        doc.image(localPath, 460, 110, { width: 90, height: 110 });
-        doc.rect(460, 110, 90, 110).strokeColor(colors.border).lineWidth(1).stroke();
+        doc.image(localPath, 460, 120, { width: 85, height: 105 });
+        doc.rect(460, 120, 85, 105).strokeColor(colors.border).lineWidth(1).stroke();
       } catch (e) {
         // Skip if photo file missing
       }
     }
 
-    doc.moveDown(3);
+    doc.y = 122;
+    doc.moveDown(2);
 
     // --- Section: Primary Profile ---
     doc.rect(50, doc.y, 500, 30).fill(colors.bgOrange);

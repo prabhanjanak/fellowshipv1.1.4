@@ -1822,14 +1822,9 @@ export default function ApplicationFormsPage() {
       if (allFilteredSelected) setSelectedIds([]);
       else setSelectedIds(filteredSubs.map((s) => s.id));
     };
-    const totalApplications = submissions.reduce((acc, s) => acc + parseSpecializations(s.specialization).length, 0);
+    const totalApplications = submissions.length;
     const today = new Date().toLocaleDateString("en-IN");
-    const todayApplications = submissions.reduce((acc, s) => {
-      if (new Date(s.submittedAt).toLocaleDateString("en-IN") === today) {
-        return acc + parseSpecializations(s.specialization).length;
-      }
-      return acc;
-    }, 0);
+    const todayApplications = submissions.filter((s) => new Date(s.submittedAt).toLocaleDateString("en-IN") === today).length;
 
     const toggleSelect = (id: number) =>
       setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -1884,8 +1879,8 @@ export default function ApplicationFormsPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
            {[
-             { label: "Total Apps", value: totalApplications, sub: "Across all specializations", color: "blue" },
-             { label: "Today", value: todayApplications, sub: today, color: "emerald" },
+             { label: "Total Applicants", value: totalApplications, sub: "Unique applicants registered", color: "blue" },
+             { label: "Today's Applicants", value: todayApplications, sub: today, color: "emerald" },
              { label: "Candidates", value: submissions.length, sub: "Unique applicants", color: "orange" },
              { label: "Pending", value: submissions.filter(s => s.status === 'pending').length, sub: "Awaiting review", color: "slate" }
            ].map((stat, idx) => (

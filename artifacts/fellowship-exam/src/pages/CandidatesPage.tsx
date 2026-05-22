@@ -86,6 +86,38 @@ const SPEC_COLORS: Record<string, string> = {
   "Vitreo Retina": "bg-rose-100 text-rose-800",
 };
 
+/** Normalize a specialization string that may be raw PostgreSQL array format */
+function parseSpecString(spec: string): string[] {
+  if (!spec) return [];
+  const s = spec.trim();
+  if (s.startsWith("{") && s.endsWith("}")) {
+    const inner = s.slice(1, -1);
+    const list: string[] = [];
+    let cur = "";
+    let inQ = false;
+    for (const ch of inner) {
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { if (cur.trim()) list.push(cur.trim()); cur = ""; }
+      else cur += ch;
+    }
+    if (cur.trim()) list.push(cur.trim());
+    return list.map(x => x.replace(/^"|"$/g, "").trim()).filter(Boolean);
+  }
+  try {
+    const p = JSON.parse(s);
+    if (Array.isArray(p)) return p.map(String).filter(Boolean);
+  } catch { /* not JSON */ }
+  return s.split(",").map(x => x.trim()).filter(Boolean);
+}
+
+/** Normalize candidate specializations — parse any raw PostgreSQL format strings */
+function normalizeSpecs(specs: string[]): string[] {
+  return Array.from(new Set(specs.flatMap(s => {
+    if (s.startsWith("{") || s.startsWith("[")) return parseSpecString(s);
+    return [s];
+  }))).filter(Boolean);
+}
+
 function SecureFileLink({ url }: { url: string | null }) {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -302,7 +334,19 @@ export default function CandidatesPage() {
 
   const downloadApprovedCandidates = async () => {
     try {
-      const blob = await api.getBlob("/candidates/export");
+      const token = localStorage.getItem("fellowship_token");
+      const res = await fetch("/api/candidates/export", {
+        headers: { Authorization: token ? `Bearer ${token}` : "" },
+      });
+      if (!res.ok) {
+        let errMsg = `Server error ${res.status}`;
+        try {
+          const body = await res.json();
+          errMsg = body.error || body.message || errMsg;
+        } catch { /* ignore */ }
+        throw new Error(errMsg);
+      }
+      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -410,18 +454,19 @@ export default function CandidatesPage() {
     } finally { setImportLoading(false); }
   };
 
-  const allSpecs = Array.from(new Set(candidates.flatMap((c) => c.specializations))).sort();
+  const allSpecs = Array.from(new Set(candidates.flatMap((c) => normalizeSpecs(c.specializations)))).sort();
   
   const filtered = candidates.filter((c) => {
+    const normalizedSpecs = normalizeSpecs(c.specializations);
     const matchSearch = c.fullName.toLowerCase().includes(search.toLowerCase()) ||
       c.candidateCode.toLowerCase().includes(search.toLowerCase()) ||
       c.email.toLowerCase().includes(search.toLowerCase());
-    const matchSpec = specFilter === "all" || c.specializations.includes(specFilter);
+    const matchSpec = specFilter === "all" || normalizedSpecs.includes(specFilter);
     const matchStatus = statusFilter === "all" || c.status === statusFilter;
     
     let matchCategory = true;
     if (categoryFilter !== "all") {
-      const interviewInfo = getInterviewInfo(c.specializations);
+      const interviewInfo = getInterviewInfo(normalizedSpecs);
       if (categoryFilter === "Anterior") {
         matchCategory = interviewInfo?.category.includes("Anterior") ?? false;
       } else if (categoryFilter === "Retina") {
@@ -722,15 +767,20 @@ export default function CandidatesPage() {
                       </div>
                     </td>
                     <td className="px-6 py-5 max-w-[200px]">
-                      <div className="flex flex-wrap gap-1.5">
-                        {c.specializations.length === 0 ? (
-                          <span className="text-[10px] font-bold text-slate-400 uppercase italic tracking-widest">No Selection</span>
-                        ) : c.specializations.map((s) => (
-                          <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
-                             {s}
-                          </Badge>
-                        ))}
-                      </div>
+                      {(() => {
+                        const specs = normalizeSpecs(c.specializations);
+                        return (
+                          <div className="flex flex-wrap gap-1.5">
+                            {specs.length === 0 ? (
+                              <span className="text-[10px] font-bold text-slate-400 uppercase italic tracking-widest">No Selection</span>
+                            ) : specs.map((s) => (
+                              <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
+                                 {s}
+                              </Badge>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-5">
                        <div className="flex flex-col gap-1">
@@ -748,7 +798,7 @@ export default function CandidatesPage() {
                        {c.status === 'approved' || c.status === 'interview_completed' || c.status === 'allocated' ? (
                          <div className="flex flex-col">
                            <span className="text-sm font-black text-emerald-600 leading-none">
-                             ₹{(2750 * Math.max(1, c.specializations?.length || 0)).toLocaleString("en-IN")}
+                             ₹{(2750 * Math.max(1, normalizeSpecs(c.specializations || []).length)).toLocaleString("en-IN")}
                            </span>
                            <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest mt-1">PAID (Verified)</span>
                          </div>

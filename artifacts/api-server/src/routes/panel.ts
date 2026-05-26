@@ -10,7 +10,7 @@ const router: Router = Router();
 
 async function getPanels(isMockMode: boolean = false) {
   const panels = (await db.execute(sql`
-    SELECT ip.id, ip.name, ip.room_number, ip.program_id, ip.is_active, ip.created_at
+    SELECT ip.id, ip.name, ip.room_number, ip.program_id, ip.speciality_id, ip.is_active, ip.created_at
     FROM interview_panels ip
     WHERE ip.is_mock = ${isMockMode}
     ORDER BY ip.room_number
@@ -28,6 +28,7 @@ async function getPanels(isMockMode: boolean = false) {
     name: p["name"],
     roomNumber: p["room_number"],
     programId: p["program_id"],
+    specialityId: p["speciality_id"],
     isActive: p["is_active"],
     createdAt: p["created_at"],
     members: members
@@ -66,15 +67,15 @@ router.post("/panels",
   requireAuth,
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
   async (req, res) => {
-    const { name, roomNumber, programId, doctorIds, mainDoctorId } = req.body as {
-      name: string; roomNumber: string; programId?: number;
+    const { name, roomNumber, programId, specialityId, doctorIds, mainDoctorId } = req.body as {
+      name: string; roomNumber: string; programId?: number; specialityId?: number;
       doctorIds?: number[]; mainDoctorId?: number;
     };
     if (!name || !roomNumber) return res.status(400).json({ error: "name and roomNumber required" });
 
     const [panel] = (await db.execute(sql`
-      INSERT INTO interview_panels (name, room_number, program_id)
-      VALUES (${name}, ${roomNumber}, ${programId ?? null})
+      INSERT INTO interview_panels (name, room_number, program_id, speciality_id)
+      VALUES (${name}, ${roomNumber}, ${programId ?? null}, ${specialityId ?? null})
       RETURNING *
     `)).rows as Array<Record<string, unknown>>;
 
@@ -96,11 +97,14 @@ router.patch("/panels/:id",
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params["id"]);
-    const { name, roomNumber, isActive } = req.body as { name?: string; roomNumber?: string; isActive?: boolean };
+    const { name, roomNumber, isActive, specialityId } = req.body as { name?: string; roomNumber?: string; isActive?: boolean; specialityId?: number | null };
     const parts: string[] = [];
     if (name !== undefined) parts.push(`name = '${name.replace(/'/g, "''")}'`);
     if (roomNumber !== undefined) parts.push(`room_number = '${roomNumber.replace(/'/g, "''")}'`);
     if (isActive !== undefined) parts.push(`is_active = ${isActive}`);
+    if (specialityId !== undefined) {
+      parts.push(`speciality_id = ${specialityId === null ? "NULL" : specialityId}`);
+    }
     if (parts.length) {
       await db.execute(sql.raw(`UPDATE interview_panels SET ${parts.join(", ")} WHERE id = ${id}`));
     }
@@ -271,7 +275,7 @@ router.get("/display/live", async (req: any, res) => {
       }
 
       const panels = (await db.execute(sql`
-        SELECT ip.id, ip.name, ip.room_number, ip.is_active, ip.program_id
+        SELECT ip.id, ip.name, ip.room_number, ip.is_active, ip.program_id, ip.speciality_id
         FROM interview_panels ip
         WHERE ip.is_active = TRUE AND ip.is_mock = ${isMock}
         ORDER BY ip.room_number
@@ -322,6 +326,7 @@ router.get("/display/live", async (req: any, res) => {
           panelId,
           panelName: p["name"],
           roomNumber: p["room_number"],
+          specialityId: p["speciality_id"],
           isActive: p["is_active"],
           members: members.map(m => m.doctor_name),
           batch: batch,
@@ -405,11 +410,12 @@ router.get("/panel/my-status", requireAuth, requireRole("doctor"), async (req, r
   await db.execute(sql`INSERT INTO doctor_panel_status (doctor_id) VALUES (${doctorId}) ON CONFLICT (doctor_id) DO NOTHING`);
   const [row] = (await db.execute(sql`
     SELECT dps.*, c.full_name as candidate_name, c.candidate_code,
-           ip.name as panel_name, ip.room_number
+           ip.name as panel_name, ip.room_number, ip.speciality_id, s.name as speciality_name
     FROM doctor_panel_status dps
     LEFT JOIN candidates c ON c.id = dps.current_candidate_id
     LEFT JOIN interview_panel_members ipm ON ipm.doctor_id = ${doctorId}
     LEFT JOIN interview_panels ip ON ip.id = ipm.panel_id
+    LEFT JOIN specialities s ON s.id = ip.speciality_id
     WHERE dps.doctor_id = ${doctorId}
     LIMIT 1
   `)).rows;
@@ -420,6 +426,8 @@ router.get("/panel/my-status", requireAuth, requireRole("doctor"), async (req, r
     currentCandidateCode: (row as Record<string, unknown>)["candidate_code"],
     panelName: (row as Record<string, unknown>)["panel_name"],
     roomNumber: (row as Record<string, unknown>)["room_number"],
+    specialityId: (row as Record<string, unknown>)["speciality_id"],
+    specialityName: (row as Record<string, unknown>)["speciality_name"],
   });
 });
 

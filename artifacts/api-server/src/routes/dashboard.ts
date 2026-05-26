@@ -11,55 +11,197 @@ import {
   allocationsTable,
   usersTable,
   unitsTable,
+  applicationSubmissionsTable,
 } from "@workspace/db";
 import { requireAuth } from "../middleware/auth";
+import { parseSpecializationString } from "../lib/utils";
 
 const router: Router = Router();
 
-router.get("/dashboard/summary", requireAuth, async (req, res) => {
+router.get("/dashboard/summary", requireAuth, async (req: any, res) => {
   const callerRole = req.user!.role;
   const callerId = req.user!.userId;
+  const isMock = req.isMockMode || false;
 
-  // For unit_coordinator: scope to their unit
-  let effectiveUnitId: number | null = null;
-  if (callerRole === "unit_coordinator") {
-    const [u] = await db.select().from(usersTable).where(eq(usersTable.id, callerId));
-    effectiveUnitId = u?.unitId ?? null;
+  // 1. Fetch all submissions
+  const allSubmissions = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
+  
+  // Overall metric definitions:
+  // Non-draft submissions are formal applications
+  const submissions = allSubmissions.filter(s => !s.saveAsDraft);
+  
+  // Unique applicants (by email)
+  const uniqueEmails = new Set(submissions.map(s => s.email.toLowerCase().trim()));
+  const totalApplicants = uniqueEmails.size;
+  
+  // Total applications (each selected speciality is an independent application)
+  let totalApplications = 0;
+  let totalRetinaApplications = 0;
+  let totalAnteriorApplications = 0;
+  
+  let vrsCount = 0;
+  let mrCount = 0;
+  let corneaCount = 0;
+  let cataractCount = 0;
+  let glaucomaCount = 0;
+  let pediatricCount = 0;
+  let orbitCount = 0;
+
+  // Unique applicants per segment
+  const retinaApplicants = new Set<string>();
+  const anteriorApplicants = new Set<string>();
+
+  // Today's applications & applicants
+  const todayStr = new Date().toDateString();
+  let todayTotalApplications = 0;
+  const todayApplicants = new Set<string>();
+  let todayRetinaApplications = 0;
+  let todayAnteriorApplications = 0;
+
+  let todayVrsCount = 0;
+  let todayMrCount = 0;
+  let todayCorneaCount = 0;
+  let todayCataractCount = 0;
+  let todayGlaucomaCount = 0;
+  let todayPediatricCount = 0;
+  let todayOrbitCount = 0;
+
+  for (const s of submissions) {
+    const email = s.email.toLowerCase().trim();
+    const isSubmittedToday = s.submittedAt && new Date(s.submittedAt).toDateString() === todayStr;
+    
+    if (isSubmittedToday) {
+      todayApplicants.add(email);
+    }
+    
+    const specs = parseSpecializationString(s.specialization);
+    for (const spec of specs) {
+      totalApplications++;
+      if (isSubmittedToday) {
+        todayTotalApplications++;
+      }
+      
+      const specLower = spec.toLowerCase();
+      // Segmentation
+      if (specLower.includes("vitreo retina") || specLower.includes("vitreoretinal")) {
+        vrsCount++;
+        totalRetinaApplications++;
+        retinaApplicants.add(email);
+        if (isSubmittedToday) {
+          todayVrsCount++;
+          todayRetinaApplications++;
+        }
+      } else if (specLower.includes("medical retina")) {
+        mrCount++;
+        totalRetinaApplications++;
+        retinaApplicants.add(email);
+        if (isSubmittedToday) {
+          todayMrCount++;
+          todayRetinaApplications++;
+        }
+      } else if (specLower.includes("cornea")) {
+        corneaCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayCorneaCount++;
+          todayAnteriorApplications++;
+        }
+      } else if (specLower.includes("cataract") || specLower.includes("refractive") || specLower.includes("phaco") || specLower.includes("iol")) {
+        cataractCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayCataractCount++;
+          todayAnteriorApplications++;
+        }
+      } else if (specLower.includes("glaucoma")) {
+        glaucomaCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayGlaucomaCount++;
+          todayAnteriorApplications++;
+        }
+      } else if (specLower.includes("pediatric") || specLower.includes("po")) {
+        pediatricCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayPediatricCount++;
+          todayAnteriorApplications++;
+        }
+      } else if (specLower.includes("orbit") || specLower.includes("oculoplast") || specLower.includes("op")) {
+        orbitCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayOrbitCount++;
+          todayAnteriorApplications++;
+        }
+      } else {
+        // Fallback to Anterior segment
+        cataractCount++;
+        totalAnteriorApplications++;
+        anteriorApplicants.add(email);
+        if (isSubmittedToday) {
+          todayCataractCount++;
+          todayAnteriorApplications++;
+        }
+      }
+    }
   }
 
-  let candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, (req as any).isMockMode));
-  if (effectiveUnitId != null) {
-    candidates = candidates.filter((c) => c.unitId === effectiveUnitId);
-  }
-
-  const programs = await db.select().from(programsTable).where(eq(programsTable.isMock, (req as any).isMockMode));
-  const units = await db.select().from(unitsTable);
-  const specs = await db.select().from(specialitiesTable);
-  const totalSeats = specs.reduce((s, x) => s + x.seats, 0);
-  const allocs = await db.select().from(allocationsTable);
-  const allocated = allocs.filter((a) => a.status === "SELECTED").length;
-  const waitlisted = candidates.filter((c) => c.status === "waitlisted").length;
-  const pending = candidates.filter((c) => c.status === "pending").length;
-  const attempts = await db.select().from(examAttemptsTable); // Filtering by candidate will handle this
-  const activeExams = (await db.select().from(examsTable).where(eq(examsTable.isMock, (req as any).isMockMode))).filter((e) => e.active).length;
-  const interviews = await db.select().from(interviewScoresTable);
-
-  const statusBreakdown = new Map<string, number>();
-  for (const c of candidates) statusBreakdown.set(c.status, (statusBreakdown.get(c.status) ?? 0) + 1);
+  const currentDate = new Date().toLocaleDateString("en-IN", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  });
 
   res.json({
-    candidates: candidates.length,
-    programs: programs.length,
-    units: units.length,
-    specialities: specs.length,
-    totalSeats,
-    activeExams,
-    attemptsCompleted: attempts.filter((a) => a.submittedAt != null).length,
-    interviewsCompleted: interviews.length,
-    allocated,
-    waitlisted,
-    pendingReview: pending,
-    statusBreakdown: Array.from(statusBreakdown.entries()).map(([status, count]) => ({ status, count })),
+    overall: {
+      totalApplications,
+      totalApplicants,
+      totalApplicationsTillDate: totalApplications,
+      currentDate
+    },
+    segmentWise: {
+      retina: {
+        totalApplications: totalRetinaApplications,
+        totalApplicants: retinaApplicants.size,
+        vitreoRetinaCount: vrsCount,
+        medicalRetinaCount: mrCount
+      },
+      anterior: {
+        totalApplications: totalAnteriorApplications,
+        totalApplicants: anteriorApplicants.size,
+        corneaCount,
+        cataractCount,
+        glaucomaCount,
+        pediatricCount,
+        orbitCount
+      }
+    },
+    today: {
+      overall: {
+        totalApplications: todayTotalApplications,
+        totalApplicants: todayApplicants.size
+      },
+      segmentWise: {
+        retina: todayRetinaApplications,
+        anterior: todayAnteriorApplications
+      },
+      specializationWise: {
+        vitreoRetina: todayVrsCount,
+        medicalRetina: todayMrCount,
+        cornea: todayCorneaCount,
+        cataract: todayCataractCount,
+        glaucoma: todayGlaucomaCount,
+        pediatric: todayPediatricCount,
+        orbit: todayOrbitCount
+      }
+    }
   });
 });
 

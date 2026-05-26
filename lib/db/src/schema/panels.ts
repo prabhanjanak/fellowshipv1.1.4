@@ -2,12 +2,14 @@ import { pgTable, text, serial, timestamp, integer, boolean, unique } from "driz
 import { programsTable } from "./programs";
 import { usersTable } from "./users";
 import { candidatesTable } from "./candidates";
+import { specialitiesTable } from "./specialities";
 
 export const interviewPanelsTable = pgTable("interview_panels", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   roomNumber: text("room_number").notNull(),
   programId: integer("program_id").references(() => programsTable.id),
+  specialityId: integer("speciality_id").references(() => specialitiesTable.id),
   isActive: boolean("is_active").notNull().default(true),
   isMock: boolean("is_mock").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

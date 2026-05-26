@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { fmtDate, fmtTime } from "../lib/dateUtils";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -46,10 +47,10 @@ export default function DisplayPage() {
         </div>
         <div className="text-right">
           <p className="text-2xl font-mono font-bold text-blue-400">
-            {now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {fmtTime(now)}
           </p>
           <p className="text-xs text-gray-500 mt-0.5">
-            {now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            {fmtDate(now)}
           </p>
         </div>
       </div>
@@ -131,7 +132,7 @@ function PanelCard({ panel }: { panel: PanelDisplay }) {
               <p className="text-3xl font-bold font-mono tracking-wider text-white">{panel.current!.candidateCode}</p>
               {panel.current!.calledAt && (
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Called at {new Date(panel.current!.calledAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                  Called at {fmtTime(panel.current!.calledAt)}
                 </p>
               )}
             </div>

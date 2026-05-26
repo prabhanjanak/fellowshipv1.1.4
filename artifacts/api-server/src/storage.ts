@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "./middleware/auth";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import path from "path";
+import PDFDocument from "pdfkit";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -72,6 +73,35 @@ router.get("/storage/objects/*path", requireAuth, requireRole("super_admin", "pr
     if (found.rows.length === 0) {
       res.status(404).json({ error: "Object not found" });
       return;
+    }
+
+    // Dynamic Image-to-PDF conversion for LOR files (PNG/JPG/JPEG -> PDF)
+    const isLorResult = await db.execute(sql`
+      SELECT 1 FROM application_submissions
+      WHERE lor1_url = ${objectPath} OR lor2_url = ${objectPath}
+      LIMIT 1
+    `);
+    const isLor = isLorResult.rows.length > 0;
+    const isImage = /\.(png|jpg|jpeg)$/i.test(wildcardPath);
+
+    if (isLor && isImage) {
+      const localPath = path.join(process.cwd(), "uploads", objectPath.replace("/objects/uploads/", ""));
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="LOR_${path.basename(wildcardPath)}.pdf"`);
+      try {
+        const doc = new PDFDocument({ margin: 0, size: "A4" });
+        doc.pipe(res);
+        // A4 points: 595.28 x 841.89
+        doc.image(localPath, 0, 0, {
+          fit: [595.28, 841.89],
+          align: "center",
+          valign: "center"
+        });
+        doc.end();
+        return;
+      } catch (err) {
+        req.log.error({ err }, "Image-to-PDF conversion failed, falling back to standard serve");
+      }
     }
 
     const isReplit = !!process.env.REPL_ID;

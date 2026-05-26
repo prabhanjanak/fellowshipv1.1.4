@@ -46,7 +46,7 @@ router.get("/ping", (req, res) => res.send("pong"));
 router.get(
   "/print-application/:id",
   requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  requireRole("super_admin", "program_admin", "central_exam_coordinator", "doctor"),
   async (req, res) => {
     try {
       const id = Number(req.params.id);

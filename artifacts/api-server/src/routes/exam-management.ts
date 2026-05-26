@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { db, batchesTable, batchCandidatesTable, documentTemplatesTable, candidatesTable } from "@workspace/db";
+import { db, batchesTable, batchCandidatesTable, documentTemplatesTable, candidatesTable, applicationsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { requireAuth, requireRole } from "../lib/auth";
+import { requireAuth, requireRole } from "../middleware/auth";
 
 const router = Router();
 
@@ -22,12 +22,27 @@ router.get("/batches", requireAuth, async (req: any, res) => {
   }
 });
 
+function parseDateString(str: any): Date {
+  if (!str) return new Date();
+  if (str instanceof Date) return str;
+  const s = String(str).trim();
+  const yyyymmdd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (yyyymmdd) {
+    return new Date(Date.UTC(Number(yyyymmdd[1]), Number(yyyymmdd[2]) - 1, Number(yyyymmdd[3])));
+  }
+  const ddmmyyyy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (ddmmyyyy) {
+    return new Date(Date.UTC(Number(ddmmyyyy[3]), Number(ddmmyyyy[2]) - 1, Number(ddmmyyyy[1])));
+  }
+  return new Date(s);
+}
+
 router.post("/batches", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req: any, res) => {
   try {
     const [batch] = await db.insert(batchesTable).values({
       name: String(req.body.name || ""),
       segment: req.body.segment ? String(req.body.segment) : null,
-      date: new Date(req.body.date),
+      date: parseDateString(req.body.date),
       timing: String(req.body.timing || ""),
       venue: req.body.venue ? String(req.body.venue) : "SEH, Bangalore",
       programId: Number(req.body.programId),
@@ -37,7 +52,9 @@ router.post("/batches", requireAuth, requireRole("super_admin", "program_admin",
       isMock: req.isMockMode || false,
     }).returning();
     res.json(batch);
-  } catch (e) {
+  } catch (e: any) {
+    const fs = require("fs");
+    fs.writeFileSync("batch_error_log.txt", String(e) + "\n" + (e.stack || ""));
     res.status(500).json({ error: String(e) });
   }
 });
@@ -96,6 +113,34 @@ router.post("/batches/:id/candidates", requireAuth, requireRole("super_admin", "
     
     await db.insert(batchCandidatesTable).values(values);
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+router.delete("/batches/:id", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req: any, res) => {
+  try {
+    const batchId = Number(req.params.id);
+    
+    // 1. Reset all applications referencing this batch back to "approved" and clear batchId
+    await db.update(applicationsTable)
+      .set({ batchId: null, status: "approved" })
+      .where(eq(applicationsTable.batchId, batchId));
+
+    // 2. Delete entries in batchCandidatesTable referencing this batch
+    await db.delete(batchCandidatesTable)
+      .where(eq(batchCandidatesTable.batchId, batchId));
+
+    // 3. Delete the batch itself from batchesTable
+    const [deleted] = await db.delete(batchesTable)
+      .where(eq(batchesTable.id, batchId))
+      .returning();
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Batch not found" });
+    }
+
+    res.json({ success: true, deleted });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }

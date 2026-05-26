@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
   db,
@@ -18,6 +18,7 @@ import {
   candidateExamAssignmentsTable,
   applicationSubmissionsTable,
   documentTemplatesTable,
+  applicationsTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { sendOfferLetterEmail, sendOfferLetterWithAttachment } from "../lib/email";
@@ -26,7 +27,7 @@ import { emailSettingsTable, applicationFormsTable, batchesTable, batchCandidate
 import PDFDocument from "pdfkit";
 import path from "path";
 import fs from "fs/promises";
-import { parseSpecializationString, formatDOBToStandard } from "../lib/utils";
+import { parseSpecializationString, formatDOBToStandard, formatToLocalDateTime } from "../lib/utils";
 import * as XLSX from "xlsx";
 
 const router: Router = Router();
@@ -42,6 +43,7 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
   const exams = await db.select().from(examsTable);
   const interviews = await db.select().from(interviewScoresTable).where(eq(interviewScoresTable.candidateId, c.id));
   const alloc = await db.select().from(allocationsTable).where(eq(allocationsTable.candidateId, c.id));
+  const apps = await db.select().from(applicationsTable).where(eq(applicationsTable.candidateId, c.id));
 
   const mcqAttempts = attempts.filter((a) => {
     const e = exams.find((x) => x.id === a.examId);
@@ -162,6 +164,14 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
       const [sub] = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.email, c.email));
       return sub?.pgQualifications ?? null;
     })(),
+    applications: apps.map((a) => ({
+      id: a.id,
+      specialityId: a.specialityId,
+      hallTicketNumber: a.hallTicketNumber,
+      status: a.status,
+      batchId: a.batchId,
+      interviewSlot: a.interviewSlot,
+    })),
   };
 }
 
@@ -196,6 +206,7 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
   const allSpecs = await db.select().from(specialitiesTable);
   const allDocs = await db.select().from(documentsTable);
   const allSubmissions = await db.select().from(applicationSubmissionsTable);
+  const allApplications = await db.select().from(applicationsTable);
 
   const out = candidates.map((c) => {
     const unit = c.unitId ? units.find((u) => u.id === c.unitId) : null;
@@ -261,6 +272,14 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
         const sub = allSubmissions.find(s => s.email?.toLowerCase() === c.email?.toLowerCase());
         return sub?.pgQualifications ?? null;
       })(),
+      applications: allApplications.filter((a) => a.candidateId === c.id).map((a) => ({
+        id: a.id,
+        specialityId: a.specialityId,
+        hallTicketNumber: a.hallTicketNumber,
+        status: a.status,
+        batchId: a.batchId,
+        interviewSlot: a.interviewSlot,
+      })),
     };
   });
   res.json(out);
@@ -591,7 +610,7 @@ router.post("/candidates", requireAuth, requireRole("super_admin", "program_admi
   }).returning();
   if (!c) { res.status(500).json({ error: "Failed" }); return; }
 
-  // Insert candidate speciality preferences
+  // Insert candidate speciality preferences & applications
   const specialityNames: string[] = [];
   if (Array.isArray(specialityIds) && specialityIds.length > 0) {
     const specs = await db.select().from(specialitiesTable);
@@ -604,6 +623,22 @@ router.post("/candidates", requireAuth, requireRole("super_admin", "program_admi
           candidateId: c.id,
           specialityId: spec.id,
           preferenceOrder: order++,
+        });
+
+        // Insert into applicationsTable for relational specialization mapping
+        const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+        const year = 2026;
+        const countResult = await db.execute(sql`
+          SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+        `);
+        const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+        const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+        await db.insert(applicationsTable).values({
+          candidateId: c.id,
+          specialityId: spec.id,
+          hallTicketNumber,
+          status: "approved",
         });
       }
     }
@@ -1070,12 +1105,62 @@ router.get("/candidates/:id/summary-pdf", requireAuth, async (req, res) => {
     doc.strokeColor(colors.accent).lineWidth(2).moveTo(50, bottom).lineTo(550, bottom).stroke();
     doc.fillColor(colors.muted).font('Helvetica').fontSize(8).text("CONFIDENTIAL DOCUMENT - FOR INTERNAL USE ONLY", 50, bottom + 10);
     doc.text("SANKARA ACADEMY OF VISION - FELLOWSHIP ADMISSIONS HUB", 50, bottom + 22);
-    doc.text(`Generated on ${new Date().toLocaleString()}`, 350, bottom + 10, { align: 'right' });
+    doc.text(`Generated on ${formatToLocalDateTime(new Date())}`, 350, bottom + 10, { align: 'right' });
 
     doc.end();
   } catch (e: any) {
     console.error("[summary-pdf] failed", e);
     res.status(500).json({ error: e.message || "Failed to generate summary PDF." });
+  }
+});
+
+// POST /candidates/:id/batches — Assign specific applications to batches directly
+router.post("/candidates/:id/batches", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  const candidateId = Number(req.params.id);
+  const { schedules } = req.body as { schedules: { applicationId: number; batchId: number | null }[] };
+  
+  try {
+    for (const s of schedules) {
+      if (s.batchId) {
+        // 1. Update applicationsTable
+        await db.update(applicationsTable)
+          .set({ batchId: s.batchId, status: "scheduled" })
+          .where(and(eq(applicationsTable.id, s.applicationId), eq(applicationsTable.candidateId, candidateId)));
+          
+        // 2. Insert or update in batchCandidatesTable
+        const existing = await db.select().from(batchCandidatesTable).where(
+          and(
+            eq(batchCandidatesTable.batchId, s.batchId),
+            eq(batchCandidatesTable.candidateId, candidateId)
+          )
+        );
+        if (existing.length === 0) {
+          await db.insert(batchCandidatesTable).values({
+            batchId: s.batchId,
+            candidateId,
+            status: "assigned"
+          });
+        }
+      } else {
+        // Remove batchId
+        // Fetch current batchId first
+        const [appRow] = await db.select().from(applicationsTable).where(eq(applicationsTable.id, s.applicationId));
+        if (appRow && appRow.batchId) {
+          await db.delete(batchCandidatesTable).where(
+            and(
+              eq(batchCandidatesTable.batchId, appRow.batchId),
+              eq(batchCandidatesTable.candidateId, candidateId)
+            )
+          );
+        }
+        await db.update(applicationsTable)
+          .set({ batchId: null, status: "approved" })
+          .where(and(eq(applicationsTable.id, s.applicationId), eq(applicationsTable.candidateId, candidateId)));
+      }
+    }
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || "Failed to update schedules" });
   }
 });
 

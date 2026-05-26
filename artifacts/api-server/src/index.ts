@@ -196,6 +196,15 @@ async function runStartupFixes() {
 
   // Ensure is_mock column exists for batches (if table already existed)
   await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);
+  await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS program_id INTEGER DEFAULT 1`);
+  await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS mcq_total_marks REAL NOT NULL DEFAULT 50`);
+  await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS psychometric_total_marks REAL NOT NULL DEFAULT 50`);
+  await db.execute(sql`ALTER TABLE batches ADD COLUMN IF NOT EXISTS interview_total_marks REAL NOT NULL DEFAULT 100`);
+
+  await db.execute(sql`ALTER TABLE batch_candidates ADD COLUMN IF NOT EXISTS mcq_score REAL`);
+  await db.execute(sql`ALTER TABLE batch_candidates ADD COLUMN IF NOT EXISTS psychometric_score REAL`);
+  await db.execute(sql`ALTER TABLE batch_candidates ADD COLUMN IF NOT EXISTS interview_score REAL`);
+  await db.execute(sql`ALTER TABLE batch_candidates ADD COLUMN IF NOT EXISTS speciality_id INTEGER`);
 
   // Virtual Mock Mode support columns
   await db.execute(sql`ALTER TABLE programs ADD COLUMN IF NOT EXISTS is_mock BOOLEAN NOT NULL DEFAULT FALSE`);

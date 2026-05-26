@@ -3,7 +3,10 @@ import {
   db, usersTable, candidatesTable, applicationFormsTable, programsTable, 
   applicationSubmissionsTable, batchesTable, batchCandidatesTable, 
   seatMatrixEntriesTable, globalSettingsTable, examsTable, questionsTable,
-  interviewPanelsTable, interviewPanelMembersTable, unitsTable
+  interviewPanelsTable, interviewPanelMembersTable, unitsTable,
+  applicationsTable, candidatePreferencesTable, interviewScoresTable, 
+  doctorAssignmentsTable, doctorPanelStatusTable, panelQueueTable, 
+  allocationsTable, examAttemptsTable, candidateExamAssignmentsTable, specialitiesTable
 } from "@workspace/db";
 import { eq, sql, ilike } from "drizzle-orm";
 import { logger } from "../lib/logger";
@@ -192,6 +195,315 @@ async function runSeed() {
         INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status)
         VALUES (${panels[panelIdx].id}, ${cand.id}, ${Math.floor(i/3) + 1}, 'waiting')
       `);
+    }
+  }
+}
+
+
+async function runSeedDemo() {
+  const hp = await hashPassword("admin123");
+
+  // 1. Wipe database (selective, keep super_admins to preserve active session)
+  await db.delete(panelQueueTable);
+  await db.delete(interviewPanelMembersTable);
+  await db.delete(interviewPanelsTable);
+  await db.delete(questionsTable);
+  await db.delete(examsTable);
+  await db.delete(batchCandidatesTable);
+  await db.delete(batchesTable);
+  await db.delete(applicationSubmissionsTable);
+  await db.delete(candidatesTable);
+  await db.delete(applicationFormsTable);
+  await db.delete(seatMatrixEntriesTable);
+  await db.delete(programsTable);
+  await db.delete(allocationsTable);
+  await db.delete(applicationsTable);
+  await db.delete(candidatePreferencesTable);
+  await db.delete(interviewScoresTable);
+  await db.delete(doctorAssignmentsTable);
+  await db.delete(doctorPanelStatusTable);
+  await db.delete(usersTable).where(sql`role != 'super_admin'`);
+
+  // 2. Create the 13 Units
+  const UNITS = [
+    "Anand", "Bangalore", "Coimbatore", "Guntur", "Hyderabad",
+    "Indore", "Jaipur", "Kanpur", "Krishnankoil", "Ludhiana",
+    "Panvel", "Shimoga", "Varanasi",
+  ];
+  const unitList = [];
+  for (const name of UNITS) {
+    const [u] = await db.insert(unitsTable).values({
+      name, city: name, location: `${name} Main Campus`, isMock: false
+    }).returning();
+    unitList.push(u);
+  }
+
+  // 3. Create 15 Panel Doctors sequentially
+  const doctorList = [];
+  for (let d = 1; d <= 15; d++) {
+    const unitIdx = (d - 1) % unitList.length;
+    const [doc] = await db.insert(usersTable).values({
+      fullName: `Dr. Doctor ${d}`,
+      email: `doctor${d}@sankara.com`,
+      passwordHash: hp,
+      role: "doctor",
+      unitId: unitList[unitIdx].id,
+      isMock: false
+    }).returning();
+    doctorList.push(doc);
+  }
+
+  // 4. Create Program & Application Form
+  const [program] = await db.insert(programsTable).values({
+    name: "Ophthalmology Fellowship Program July 2026",
+    code: "FP-JULY-2026",
+    academicYear: "2026",
+    description: "Advanced surgical fellowship in various ophthalmology subspecialities.",
+    isMock: false,
+  }).returning();
+
+  const [form] = await db.insert(applicationFormsTable).values({
+    programId: program.id,
+    title: "July 2026 Admissions Application Form",
+    token: "JULY2026",
+    deadline: new Date("2026-06-30T23:59:59.000Z"),
+    isActive: true,
+    sectionsConfig: DEFAULT_SECTIONS as any
+  }).returning();
+
+  // 5. Populate specialties and seat matrix exactly matching the 67-seat user matrix
+  const MATRIX: Record<string, Record<string, number>> = {
+    "Cornea":                  { Bangalore:1, Coimbatore:1, Guntur:3, Jaipur:1, Shimoga:1 },
+    "Glaucoma":                { Bangalore:1, Guntur:2, Shimoga:1 },
+    "IOL Fellowship":          { Anand:2, Bangalore:1, Coimbatore:1, Guntur:2, Hyderabad:3, Indore:4, Jaipur:2, Kanpur:2, Krishnankoil:4, Ludhiana:4, Panvel:2, Shimoga:1, Varanasi:4 },
+    "Medical Retina":          { Bangalore:1, Coimbatore:1, Guntur:3, Jaipur:1, Shimoga:1 },
+    "Oculoplasty":             { Bangalore:1, Coimbatore:1, Guntur:1 },
+    "Pediatric Ophthalmology": { Bangalore:1, Coimbatore:1, Guntur:1, Shimoga:1 },
+    "Phaco Refractive":        { Bangalore:1, Coimbatore:1 },
+    "Vitreo Retina":           { Bangalore:3, Coimbatore:1, Guntur:3, Shimoga:1 }
+  };
+
+  const specList = [];
+  for (const [specialityName, unitSeats] of Object.entries(MATRIX)) {
+    const total = Object.values(unitSeats).reduce((a, b) => a + b, 0);
+    const code = specialityName.replace(/[^A-Z]/gi, "").toUpperCase().slice(0, 4);
+    const [spec] = await db.insert(specialitiesTable).values({
+      programId: program.id,
+      name: specialityName,
+      code,
+      seats: total
+    }).returning();
+    specList.push(spec);
+
+    for (const unit of UNITS) {
+      const seats = unitSeats[unit] ?? 0;
+      await db.insert(seatMatrixEntriesTable).values({
+        programId: program.id,
+        speciality: specialityName,
+        unitName: unit,
+        totalSeats: seats,
+        allocatedSeats: 0
+      });
+    }
+  }
+
+  // 6. Create MCQ Entrance Exam
+  const [exam] = await db.insert(examsTable).values({
+    title: "July 2026 Entrance MCQ",
+    kind: "mcq",
+    programId: program.id,
+    durationMinutes: 60,
+    totalQuestions: 5,
+    active: true,
+    isMock: false,
+  }).returning();
+
+  for (let i = 1; i <= 5; i++) {
+    await db.insert(questionsTable).values({
+      examId: exam.id,
+      text: `Question ${i}: Which of the following is related to eye anatomy?`,
+      choices: ["Retina", "Liver", "Heart", "Lungs"],
+      correctIndex: 0,
+    });
+  }
+
+  // 7. Create Interview Panels and map Doctors
+  const panelList = [];
+  const specsOrder = ["Cornea", "Glaucoma", "IOL Fellowship", "Medical Retina", "Oculoplasty", "Pediatric Ophthalmology", "Phaco Refractive", "Vitreo Retina"];
+  for (let pIdx = 0; pIdx < specsOrder.length; pIdx++) {
+    const specName = specsOrder[pIdx];
+    const specObj = specList.find(s => s.name === specName);
+    if (!specObj) continue;
+
+    const [ip] = await db.insert(interviewPanelsTable).values({
+      name: `${specName} Panel`,
+      roomNumber: `Room 10${pIdx + 1}`,
+      programId: program.id,
+      specialityId: specObj.id,
+      isActive: true,
+      isMock: false
+    }).returning();
+    panelList.push(ip);
+
+    const doc1 = doctorList[(pIdx * 2) % doctorList.length];
+    const doc2 = doctorList[(pIdx * 2 + 1) % doctorList.length];
+
+    await db.insert(interviewPanelMembersTable).values({ panelId: ip.id, doctorId: doc1.id, isMain: true });
+    await db.insert(interviewPanelMembersTable).values({ panelId: ip.id, doctorId: doc2.id, isMain: false });
+  }
+
+  // 8. Create 30 highly realistic candidates
+  const candidateNames = [
+    "Aditya Vardhan", "Bhavana Rao", "Chaitanya Krishna", "Divya Teja", "Eshwar Prasad",
+    "Gautami Nair", "Hari Prasad", "Indira Priyadarshini", "Jayadeep Singh", "Kalyani Sen",
+    "Lokesh Rahul", "Meenakshi Iyer", "Naveen Chandra", "Ojaswi Sharma", "Pranati Gosh",
+    "Rahul Dravid", "Srinivas Raju", "Tejaswini Reddy", "Uday Kiran", "Venkatesh Prasad",
+    "Waman Prabhu", "Yashwanth Gowda", "Zoya Akhtar", "Amitav Ghosh", "Balaji Naidu",
+    "Charu Lata", "Deepak Chopra", "Elisa George", "Faisal Khan", "Ganesh Hegde"
+  ];
+
+  const [batch] = await db.insert(batchesTable).values({
+    programId: program.id,
+    name: "July 2026 Main Interview Batch",
+    date: new Date("2026-07-01T09:00:00.000Z"),
+    timing: "09:00 AM",
+    venue: "Bengaluru Main Campus",
+    isMock: false,
+  }).returning();
+
+  for (let i = 0; i < candidateNames.length; i++) {
+    const name = candidateNames[i];
+    const email = `cand${i+1}@test.com`;
+    const candCode = `SAV-2026-${1000 + i + 1}`;
+    
+    const isCompleted = i < 22;
+    const candStatus = isCompleted ? "interview_completed" : "approved";
+
+    const mcqScoreVal = 65 + (i * 3 + 7) % 31; 
+    const psyScoreVal = 70 + (i * 2 + 3) % 26; 
+
+    const [cand] = await db.insert(candidatesTable).values({
+      fullName: name,
+      email,
+      candidateCode: candCode,
+      phone: `98765432${(10 + i).toString().slice(-2)}`,
+      dateOfBirth: `1998-05-${(10 + (i % 20)).toString().padStart(2, "0")}`,
+      gender: i % 2 === 0 ? "Male" : "Female",
+      qualification: "MS Ophthalmology",
+      collegeName: "All India Institute of Medical Sciences",
+      status: candStatus,
+      mcqScore: mcqScoreVal.toString(),
+      psychometricScore: psyScoreVal.toString(),
+      isMock: false
+    }).returning();
+
+    let prefSpecs = [];
+    if (i % 3 === 0) {
+      prefSpecs = ["Vitreo Retina", "Medical Retina"];
+    } else if (i % 3 === 1) {
+      prefSpecs = ["IOL Fellowship", "Cornea", "Glaucoma"];
+    } else {
+      prefSpecs = ["Oculoplasty", "Pediatric Ophthalmology", "Phaco Refractive"];
+    }
+
+    const prefSpecIds = [];
+    const centerPrefsMap: Record<string, string[]> = {};
+
+    for (let pOrder = 0; pOrder < prefSpecs.length; pOrder++) {
+      const specName = prefSpecs[pOrder];
+      const specObj = specList.find(s => s.name === specName);
+      if (!specObj) continue;
+      prefSpecIds.push(specObj.id);
+
+      await db.insert(candidatePreferencesTable).values({
+        candidateId: cand.id,
+        specialityId: specObj.id,
+        preferenceOrder: pOrder + 1
+      });
+
+      await db.insert(applicationsTable).values({
+        candidateId: cand.id,
+        specialityId: specObj.id,
+        hallTicketNumber: `HT-${specObj.code}-${1000 + cand.id}`,
+        status: candStatus,
+        batchId: batch.id,
+        interviewSlot: "10:00 AM - 12:00 PM"
+      });
+
+      const availableUnits = Object.keys(MATRIX[specName]).filter(unit => MATRIX[specName][unit] > 0);
+      centerPrefsMap[specName] = availableUnits.slice(0, 3);
+    }
+
+    await db.insert(applicationSubmissionsTable).values({
+      formId: form.id,
+      candidateId: cand.id,
+      status: "approved",
+      fullName: name,
+      email,
+      phone: cand.phone,
+      dateOfBirth: cand.dateOfBirth,
+      gender: cand.gender,
+      degree: cand.qualification,
+      medicalCollege: cand.collegeName,
+      specialization: prefSpecs[0],
+      centerPreference: JSON.stringify(centerPrefsMap),
+      declarationAccepted: true,
+      readyForReview: true,
+      paymentId: `pay_mock_${cand.id}`,
+      paidAmount: 1500,
+      photoUrl: `/objects/demo-photo.jpg`,
+      lor1Url: `/objects/demo-lor.jpg`,
+      lor2Url: `/objects/demo-lor.jpg`,
+      isMock: false,
+      submittedAt: new Date(Date.now() - (30 - i) * 24 * 3600 * 1000)
+    });
+
+    await db.insert(examAttemptsTable).values({
+      candidateId: cand.id,
+      examId: exam.id,
+      score: mcqScoreVal,
+      maxScore: 100,
+      startedAt: new Date(Date.now() - 5 * 24 * 3600 * 1000),
+      submittedAt: new Date(Date.now() - 5 * 24 * 3600 * 1000 + 3600 * 1000)
+    });
+
+    await db.insert(batchCandidatesTable).values({
+      batchId: batch.id,
+      candidateId: cand.id,
+      status: "assigned"
+    });
+
+    if (isCompleted) {
+      for (const specId of prefSpecIds) {
+        const panelObj = panelList.find(p => p.specialityId === specId);
+        if (!panelObj) continue;
+
+        const members = await db.select().from(interviewPanelMembersTable).where(eq(interviewPanelMembersTable.panelId, panelObj.id));
+        
+        let scoreIndex = 0;
+        for (const member of members) {
+          const docScore = 70 + ((i + scoreIndex) * 7 + 13) % 26;
+          await db.insert(interviewScoresTable).values({
+            candidateId: cand.id,
+            doctorId: member.doctorId,
+            specialityId: specId,
+            score: docScore,
+            remarks: "Highly passionate and possesses excellent clinical aptitude."
+          });
+          scoreIndex++;
+        }
+      }
+    } else {
+      for (const specId of prefSpecIds) {
+        const panelObj = panelList.find(p => p.specialityId === specId);
+        if (!panelObj) continue;
+        await db.insert(panelQueueTable).values({
+          panelId: panelObj.id,
+          candidateId: cand.id,
+          queuePosition: i - 21,
+          status: "waiting"
+        }).onConflictDoNothing();
+      }
     }
   }
 }

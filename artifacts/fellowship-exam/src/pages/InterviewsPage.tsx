@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { fmtDate, fmtTime } from "../lib/dateUtils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -12,7 +13,7 @@ import { Badge } from "../components/ui/badge";
 import {
   Stethoscope, UserPlus, Trash2, Star, Activity, RadioTower,
   LayoutGrid, Plus, Settings, Users, ArrowRight, CheckCircle2,
-  Clock, DoorOpen, UserCheck, X,
+  Clock, DoorOpen, UserCheck, X, FileText, Loader2,
 } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 
@@ -34,6 +35,8 @@ interface DoctorAssignment {
   status: string; scheduledAt: string | null;
   existingScore: { id: number; score: number; remarks: string | null; submittedAt: string } | null;
   batchId?: number;
+  specialityId?: number | null;
+  specialityName?: string;
 }
 
 interface PanelEntry {
@@ -47,6 +50,7 @@ interface PanelEntry {
 interface PanelMember { doctorId: number; doctorName: string; doctorEmail: string; isMain: boolean; }
 interface Panel {
   id: number; name: string; roomNumber: string; programId: number | null;
+  specialityId?: number | null;
   isActive: boolean; createdAt: string; members: PanelMember[];
 }
 
@@ -85,6 +89,7 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
     isEngaged: boolean; currentCandidateId: number | null;
     currentCandidateName: string | null; currentCandidateCode: string | null;
     panelName: string | null; roomNumber: string | null;
+    specialityId: number | null; specialityName: string | null;
   }>({
     queryKey: ["panel-my-status"],
     queryFn: () => api.get("/panel/my-status"),
@@ -117,7 +122,12 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                 {isEngaged ? "Engaged — Interview in Progress" : "Free — Available"}
               </p>
               {myStatus?.panelName && (
-                <p className="text-xs text-muted-foreground mt-0.5">Panel: <strong>{myStatus.panelName}</strong> · Room {myStatus.roomNumber}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Panel: <strong>{myStatus.panelName}</strong> · Room {myStatus.roomNumber}
+                  {myStatus.specialityName && (
+                    <span className="ml-1 text-primary font-medium">({myStatus.specialityName})</span>
+                  )}
+                </p>
               )}
               {isEngaged && myStatus?.currentCandidateName && (
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -139,6 +149,9 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
 
       <div>
         <h1 className="text-2xl font-bold">My Interview Assignments</h1>
+        {myStatus?.specialityName && (
+          <p className="text-sm font-semibold text-primary mt-1">Specialization Panel: {myStatus.specialityName}</p>
+        )}
         <p className="text-muted-foreground text-sm mt-1">{assignments.length} candidates assigned</p>
       </div>
 
@@ -164,7 +177,14 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                 <tbody>
                   {assignments.map((a) => (
                     <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20">
-                      <td className="px-4 py-3 font-medium">{a.candidateName}</td>
+                      <td className="px-4 py-3 font-medium">
+                        <div>
+                          {a.candidateName}
+                          {a.specialityName && (
+                            <span className="block text-[10px] text-muted-foreground">{a.specialityName}</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs">{a.candidateCode}</td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {a.scheduledAt ? new Date(a.scheduledAt).toLocaleString("en-IN") : "—"}
@@ -189,21 +209,103 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
       )}
 
       <Dialog open={!!scoreOpen} onOpenChange={() => setScoreOpen(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Interview Score — {scoreOpen?.candidateName}</DialogTitle>
-            <p className="text-xs text-muted-foreground font-mono">Total Marks for this session: {scoreOpen?.batchId ? "Defined by Batch" : "100"}</p>
+        <DialogContent className="max-w-5xl w-[90vw] p-0 rounded-3xl overflow-hidden border-none bg-white shadow-2xl">
+          <DialogHeader className="bg-slate-900 text-white p-6 shrink-0 border-b border-white/5 flex flex-row items-center justify-between">
+            <div>
+              <DialogTitle className="text-lg font-black uppercase tracking-widest text-white flex items-center gap-2">
+                <Stethoscope className="h-5 w-5 text-indigo-400" />
+                Clinical Evaluation Station — {scoreOpen?.candidateName}
+              </DialogTitle>
+              {scoreOpen?.specialityName && (
+                <Badge variant="outline" className="mt-2 text-[10px] font-black uppercase text-indigo-200 border-indigo-500/30 bg-indigo-500/10 h-6 px-3">
+                  Specialization: {scoreOpen.specialityName}
+                </Badge>
+              )}
+            </div>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-1.5"><Label>Score</Label><Input type="number" min={0} value={score} onChange={(e) => setScore(e.target.value)} placeholder="Enter marks..." /></div>
-            <div className="space-y-1.5"><Label>Remarks (optional)</Label><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Clinical assessment notes…" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setScoreOpen(null)}>Cancel</Button>
-            <Button disabled={!score || submitScore.isPending} onClick={() => scoreOpen && submitScore.mutate({ candidateId: scoreOpen.candidateId, score: Number(score), remarks })}>
-              {submitScore.isPending ? "Submitting…" : "Submit Score"}
-            </Button>
-          </DialogFooter>
+
+          {scoreOpen && (
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-0 h-[70vh]">
+              {/* Left Column: Comprehensive Printable Form with LOR */}
+              <div className="md:col-span-3 border-r bg-slate-50 flex flex-col p-4 space-y-3">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                    <FileText className="h-3.5 w-3.5 text-slate-400" />
+                    Applicant Dossier & Reference LOR Files
+                  </span>
+                  <Badge variant="outline" className="text-[9px] font-black uppercase tracking-wider bg-slate-100 text-slate-500 border-slate-200 h-5">
+                    Code: {scoreOpen.candidateCode}
+                  </Badge>
+                </div>
+                <div className="flex-1 border border-slate-200/80 rounded-2xl overflow-hidden bg-white shadow-sm relative">
+                  <iframe 
+                    src={`/api/print-application/${scoreOpen.candidateId}?token=${localStorage.getItem("fellowship_token")}`} 
+                    className="w-full h-full border-none" 
+                    title="Comprehensive Application Print View"
+                  />
+                </div>
+              </div>
+
+              {/* Right Column: Score entry and lock protocols */}
+              <div className="md:col-span-2 p-6 flex flex-col justify-between bg-white h-full">
+                <div className="space-y-6">
+                  <div>
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Evaluation Matrix</h4>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                      Total scoring range: 0 – {scoreOpen.batchId ? "Defined by Batch" : "100 Marks"}
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Assigned Clinical Mark</Label>
+                      <Input 
+                        type="number" 
+                        min={0} 
+                        max={100}
+                        value={score} 
+                        onChange={(e) => setScore(e.target.value)} 
+                        placeholder="Enter score..." 
+                        className="h-12 border-2 rounded-xl focus:ring-indigo-500 font-bold font-mono text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Assessment Remarks</Label>
+                      <textarea 
+                        value={remarks} 
+                        onChange={(e) => setRemarks(e.target.value)} 
+                        placeholder="Clinical assessment observations, skills proficiency, panel consensus notes..." 
+                        className="w-full min-h-[140px] p-3 text-sm font-semibold border-2 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 border-input bg-background"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-slate-100 flex flex-col gap-2 shrink-0">
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setScoreOpen(null)} 
+                      className="rounded-xl h-12 text-xs font-bold uppercase tracking-wider flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button 
+                      disabled={!score || submitScore.isPending} 
+                      onClick={() => scoreOpen && submitScore.mutate({ candidateId: scoreOpen.candidateId, score: Number(score), remarks })}
+                      className="rounded-xl h-12 bg-slate-900 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider flex-1 gap-1.5 shadow-lg active:scale-95 transition-all"
+                    >
+                      {submitScore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4 text-emerald-400" />}
+                      Commit & Lock
+                    </Button>
+                  </div>
+                  <p className="text-[9px] font-bold text-center text-slate-400 uppercase tracking-widest mt-1">
+                    * Evaluation lock synchronizes marks to counseling queue atomically
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -405,7 +507,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                               <tr key={a.id} className="border-t hover:bg-muted/20">
                                 <td className="px-3 py-2 font-medium text-sm">{a.candidateName}</td>
                                 <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{a.candidateCode}</td>
-                                <td className="px-3 py-2 text-xs text-muted-foreground">{a.scheduledAt ? new Date(a.scheduledAt).toLocaleDateString("en-IN") : "—"}</td>
+                                <td className="px-3 py-2 text-xs text-muted-foreground">{a.scheduledAt ? fmtDate(a.scheduledAt) : "—"}</td>
                                 <td className="px-3 py-2"><Badge variant={a.status === "completed" ? "default" : "secondary"} className="text-[10px]">{a.status}</Badge></td>
                                 <td className="px-3 py-2 text-right font-semibold text-sm">{a.score != null ? a.score : "—"}</td>
                                 <td className="px-3 py-2 text-right">
@@ -491,9 +593,9 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right text-xs text-muted-foreground">
-                              {lastDate.toLocaleDateString("en-IN")}
+                              {fmtDate(lastDate)}
                               <br />
-                              {lastDate.toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' })}
+                              {fmtTime(lastDate)}
                             </td>
                           </tr>
                         );
@@ -554,16 +656,27 @@ function PanelsTab({ toast, qc, candidates }: {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createRoom, setCreateRoom] = useState("");
+  const [createSpecialityId, setCreateSpecialityId] = useState<string>("none");
+
   const [selectedPanelId, setSelectedPanelId] = useState<number | null>(null);
   const [addMemberDoctorId, setAddMemberDoctorId] = useState("");
   const [addCandidateId, setAddCandidateId] = useState("");
   const [candSearch, setCandSearch] = useState("");
   const [managePanel, setManagePanel] = useState<Panel | null>(null);
 
+  const [editName, setEditName] = useState("");
+  const [editRoom, setEditRoom] = useState("");
+  const [editSpecialityId, setEditSpecialityId] = useState<string>("none");
+
   const { data: panels = [], isLoading } = useQuery<Panel[]>({
     queryKey: ["panels"],
     queryFn: () => api.get<Panel[]>("/panels"),
     refetchInterval: 8000,
+  });
+
+  const { data: specialities = [] } = useQuery<{ id: number; name: string; code: string }[]>({
+    queryKey: ["specialities"],
+    queryFn: () => api.get("/specialities"),
   });
 
   const { data: doctorUsers = [] } = useQuery<DoctorUser[]>({
@@ -580,11 +693,11 @@ function PanelsTab({ toast, qc, candidates }: {
   });
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; roomNumber: string }) => api.post<Panel>("/panels", body),
+    mutationFn: (body: { name: string; roomNumber: string; specialityId?: number | null }) => api.post<Panel>("/panels", body),
     onSuccess: () => {
       toast({ title: "Panel created" });
       qc.invalidateQueries({ queryKey: ["panels"] });
-      setCreateOpen(false); setCreateName(""); setCreateRoom("");
+      setCreateOpen(false); setCreateName(""); setCreateRoom(""); setCreateSpecialityId("none");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -599,11 +712,24 @@ function PanelsTab({ toast, qc, candidates }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const toggleActiveMutation = useMutation({
-    mutationFn: ({ id, isActive }: { id: number; isActive: boolean }) => api.patch(`/panels/${id}`, { isActive }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["panels"] }); },
+  const updatePanelMutation = useMutation({
+    mutationFn: ({ id, ...body }: { id: number; name?: string; roomNumber?: string; isActive?: boolean; specialityId?: number | null }) =>
+      api.patch(`/panels/${id}`, body),
+    onSuccess: () => {
+      toast({ title: "Panel updated" });
+      qc.invalidateQueries({ queryKey: ["panels"] });
+      setManagePanel(null);
+    },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  useEffect(() => {
+    if (managePanel) {
+      setEditName(managePanel.name);
+      setEditRoom(managePanel.roomNumber);
+      setEditSpecialityId(managePanel.specialityId ? String(managePanel.specialityId) : "none");
+    }
+  }, [managePanel]);
 
   const addMemberMutation = useMutation({
     mutationFn: ({ panelId, doctorId }: { panelId: number; doctorId: number }) =>
@@ -727,13 +853,22 @@ function PanelsTab({ toast, qc, candidates }: {
               <Card>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="flex items-center gap-2 text-base">
-                      <DoorOpen className="h-4 w-4" /> Room {selectedPanel.roomNumber}
-                      <span className="text-base font-normal text-muted-foreground">— {selectedPanel.name}</span>
-                    </CardTitle>
+                    <div>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <DoorOpen className="h-4 w-4" /> Room {selectedPanel.roomNumber}
+                        <span className="text-base font-normal text-muted-foreground">— {selectedPanel.name}</span>
+                      </CardTitle>
+                      {selectedPanel.specialityId && (
+                        <div className="mt-1">
+                          <Badge variant="outline" className="text-[10px] text-primary border-primary/20 bg-primary/5">
+                            Specialization: {specialities.find((s) => s.id === selectedPanel.specialityId)?.name || "Mapped"}
+                          </Badge>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Button size="sm" variant="outline" className="h-7 gap-1 text-xs"
-                        onClick={() => toggleActiveMutation.mutate({ id: selectedPanel.id, isActive: !selectedPanel.isActive })}>
+                        onClick={() => updatePanelMutation.mutate({ id: selectedPanel.id, isActive: !selectedPanel.isActive })}>
                         {selectedPanel.isActive ? "Deactivate" : "Activate"}
                       </Button>
                       <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setManagePanel(selectedPanel)}>
@@ -807,7 +942,7 @@ function PanelsTab({ toast, qc, candidates }: {
                           <p className="text-xs font-mono text-muted-foreground">{currentCandidate.candidateCode}</p>
                           {currentCandidate.calledAt && (
                             <p className="text-[10px] text-muted-foreground mt-0.5">
-                              Since {new Date(currentCandidate.calledAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                              Since {fmtTime(currentCandidate.calledAt)}
                             </p>
                           )}
                         </div>
@@ -906,7 +1041,7 @@ function PanelsTab({ toast, qc, candidates }: {
       )}
 
       {/* Create Panel Dialog */}
-      <Dialog open={createOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setCreateName(""); setCreateRoom(""); } }}>
+      <Dialog open={createOpen} onOpenChange={(o) => { if (!o) { setCreateOpen(false); setCreateName(""); setCreateRoom(""); setCreateSpecialityId("none"); } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Create Interview Panel</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -918,27 +1053,79 @@ function PanelsTab({ toast, qc, candidates }: {
               <Label>Room Number / Name</Label>
               <Input placeholder="e.g. Room 101, Conference Hall…" value={createRoom} onChange={(e) => setCreateRoom(e.target.value)} />
             </div>
+            <div className="space-y-1.5">
+              <Label>Specialization Mapping</Label>
+              <Select value={createSpecialityId} onValueChange={setCreateSpecialityId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Specialization..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None (General Panel)</SelectItem>
+                  {specialities.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
             <Button disabled={!createName.trim() || !createRoom.trim() || createMutation.isPending}
-              onClick={() => createMutation.mutate({ name: createName.trim(), roomNumber: createRoom.trim() })}>
+              onClick={() => createMutation.mutate({
+                name: createName.trim(),
+                roomNumber: createRoom.trim(),
+                specialityId: createSpecialityId === "none" ? null : Number(createSpecialityId)
+              })}>
               {createMutation.isPending ? "Creating…" : "Create Panel"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Panel Info Dialog */}
+      {/* Panel Info / Manage Dialog */}
       <Dialog open={managePanel !== null} onOpenChange={(o) => { if (!o) setManagePanel(null); }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Panel Info — {managePanel?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between border-b pb-2"><span className="text-muted-foreground">Room</span><span className="font-medium">{managePanel?.roomNumber}</span></div>
-            <div className="flex justify-between border-b pb-2"><span className="text-muted-foreground">Status</span><span className={managePanel?.isActive ? "text-emerald-600 font-medium" : "text-muted-foreground"}>{managePanel?.isActive ? "Active" : "Inactive"}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Doctors</span><span className="font-medium">{managePanel?.members.length}</span></div>
+          <DialogHeader><DialogTitle>Manage Panel — {managePanel?.name}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Panel Name</Label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Room Number / Name</Label>
+              <Input value={editRoom} onChange={(e) => setEditRoom(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Specialization Mapping</Label>
+              <Select value={editSpecialityId} onValueChange={setEditSpecialityId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Specialization..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None (General Panel)</SelectItem>
+                  {specialities.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-between border-t pt-2 text-sm">
+              <span className="text-muted-foreground">Members count:</span>
+              <span className="font-semibold">{managePanel?.members.length} doctors</span>
+            </div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setManagePanel(null)}>Close</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManagePanel(null)}>Cancel</Button>
+            <Button disabled={!editName.trim() || !editRoom.trim() || updatePanelMutation.isPending}
+              onClick={() => managePanel && updatePanelMutation.mutate({
+                id: managePanel.id,
+                name: editName.trim(),
+                roomNumber: editRoom.trim(),
+                specialityId: editSpecialityId === "none" ? null : Number(editSpecialityId)
+              })}>
+              {updatePanelMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

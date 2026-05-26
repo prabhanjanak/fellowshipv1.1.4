@@ -1,6 +1,7 @@
 import { pgTable, text, serial, timestamp, integer, boolean, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { specialitiesTable } from "./specialities";
 
 export const examsTable = pgTable("exams", {
   id: serial("id").primaryKey(),
@@ -37,6 +38,7 @@ export const batchCandidatesTable = pgTable("batch_candidates", {
   id: serial("id").primaryKey(),
   batchId: integer("batch_id").notNull(),
   candidateId: integer("candidate_id").notNull(),
+  specialityId: integer("speciality_id").references(() => specialitiesTable.id),
   mcqScore: real("mcq_score"),
   psychometricScore: real("psychometric_score"),
   interviewScore: real("interview_score"), // Average of all doctors

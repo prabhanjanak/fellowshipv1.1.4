@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { fmtDate } from "../lib/dateUtils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
@@ -153,18 +154,25 @@ export default function BatchesPage() {
     const formData = new FormData(e.currentTarget);
     
     const programIdRaw = formData.get("programId");
-    if (!programIdRaw) {
-      toast({ title: "Error", description: "Please select an academic program", variant: "destructive" });
-      return;
+    const programId = programIdRaw ? parseInt(programIdRaw as string) : (programs[0]?.id || 1);
+
+    const rawDate = formData.get("date") as string;
+    let isoDate = rawDate;
+    if (rawDate && rawDate.includes("-")) {
+      const parts = rawDate.split("-");
+      if (parts.length === 3 && parts[0].length === 2) {
+        // DD-MM-YYYY -> YYYY-MM-DD
+        isoDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
     }
 
     const data = {
       name: formData.get("name"),
       segment: formData.get("segment"),
-      date: formData.get("date"),
+      date: isoDate,
       timing: `${startHour}:${startMin} ${startPeriod} - ${endHour}:${endMin} ${endPeriod}`,
       venue: formData.get("venue"),
-      programId: parseInt(programIdRaw as string),
+      programId: programId,
       mcqTotalMarks: parseFloat(formData.get("mcqTotal") as string) || 50,
       psychometricTotalMarks: parseFloat(formData.get("psychTotal") as string) || 50,
       interviewTotalMarks: parseFloat(formData.get("interviewTotal") as string) || 100,
@@ -238,8 +246,8 @@ export default function BatchesPage() {
                       </div>
                       <div className="space-y-2">
                         <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Academic Program</Label>
-                        <select name="programId" className="w-full h-14 rounded-2xl border-2 border-slate-100 bg-white px-4 text-sm font-bold uppercase focus:border-primary/20 transition-all outline-none" required>
-                          <option value="">Select Program</option>
+                        <select name="programId" className="w-full h-14 rounded-2xl border-2 border-slate-100 bg-white px-4 text-sm font-bold uppercase focus:border-primary/20 transition-all outline-none">
+                          <option value="">Select Program (Optional)</option>
                           {programs.map((p: any) => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
@@ -260,7 +268,7 @@ export default function BatchesPage() {
                     </div>
                     <div className="space-y-2">
                       <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Execution Date</Label>
-                      <Input id="date" name="date" type="date" className="h-14 rounded-2xl border-2 border-slate-100 font-bold focus:border-primary/20 transition-all text-base" required />
+                      <Input id="date" name="date" type="date" className="h-14 rounded-2xl border-2 border-slate-100 font-bold focus:border-primary/20 transition-all text-base bg-white dark:bg-black" required />
                     </div>
                   </div>
 
@@ -392,7 +400,7 @@ export default function BatchesPage() {
             <div className="text-left">
               <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-2 text-indigo-300">Next Cycle</p>
               <h3 className="text-3xl font-black text-white tracking-tight leading-none">
-                {batches[0] ? new Date(batches[0].date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'No Pending'}
+                {batches[0] ? fmtDate(batches[0].date) : 'No Pending'}
               </h3>
               {batches[0]?.timing && (
                 <div className="flex items-center gap-2 mt-3 px-3 py-1 bg-white/10 rounded-full w-fit">
@@ -459,7 +467,7 @@ export default function BatchesPage() {
                       <TableCell className="px-6 text-center">
                         <div className="flex flex-col items-center gap-1.5">
                           <div className="font-black text-slate-900 text-base uppercase tracking-tighter">
-                            {new Date(batch.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                            {fmtDate(batch.date)}
                           </div>
                           <div className="flex items-center gap-1.5 px-4 py-1.5 bg-orange-50 rounded-full border border-orange-100 shadow-sm">
                             <Clock className="h-3.5 w-3.5 text-orange-500" />

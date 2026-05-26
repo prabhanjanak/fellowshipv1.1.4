@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import {
   db,
   allocationsTable,
@@ -7,6 +7,7 @@ import {
   programsTable,
   specialitiesTable,
   unitsTable,
+  seatMatrixEntriesTable,
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { computeScoresForProgram } from "../lib/scoring";
@@ -38,78 +39,165 @@ async function listAllocations(programId?: number) {
       unitName: u?.name ?? null,
       status: a.status,
       rank: a.rank,
+      totalScore: a.totalScore,
       allocatedAt: a.allocatedAt.toISOString(),
     };
   });
 }
 
-router.post("/allocations/run", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
-  const { programId } = req.body as { programId: number };
-  if (!programId) { res.status(400).json({ error: "programId required" }); return; }
-  const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
-  const seatsLeft = new Map<number, number>(specs.map((s) => [s.id, s.seats]));
-  const ranked = await computeScoresForProgram(programId);
-
-  // Wipe previous allocations for this program
-  for (const a of await db.select().from(allocationsTable).where(eq(allocationsTable.programId, programId))) {
-    await db.delete(allocationsTable).where(eq(allocationsTable.id, a.id));
-  }
-
-  let selected = 0;
-  let waitlisted = 0;
-  let rejected = 0;
-
-  for (let i = 0; i < ranked.length; i++) {
-    const r = ranked[i]!;
-    let assignedSpecId: number | null = null;
-    for (const specId of r.preferenceSpecIds) {
-      const left = seatsLeft.get(specId);
-      if (left != null && left > 0) {
-        assignedSpecId = specId;
-        seatsLeft.set(specId, left - 1);
-        break;
-      }
-    }
-
-    let status: string;
-    if (assignedSpecId != null) {
-      status = "SELECTED";
-      selected++;
-    } else {
-      const anySeatsLeft = Array.from(seatsLeft.values()).some((v) => v > 0);
-      if (anySeatsLeft || ranked.length <= specs.reduce((s, x) => s + x.seats, 0) * 2) {
-        status = "WAITLISTED";
-        waitlisted++;
-      } else {
-        status = "REJECTED";
-        rejected++;
-      }
-    }
-
-    const [c] = await db.select().from(candidatesTable).where(eq(candidatesTable.id, r.candidateId));
-    await db.insert(allocationsTable).values({
-      candidateId: r.candidateId,
-      programId,
-      specialityId: assignedSpecId,
-      unitId: c?.unitId ?? null,
-      status,
-      rank: i + 1,
-      totalScore: r.totalScore,
-    });
-
-    await db.update(candidatesTable).set({
-      status: status === "SELECTED" ? "allocated" : status === "WAITLISTED" ? "waitlisted" : "rejected",
-    }).where(eq(candidatesTable.id, r.candidateId));
-  }
-
-  res.json({ selected, waitlisted, rejected });
-});
-
+// GET /allocations
 router.get("/allocations", requireAuth, async (req, res) => {
   const programId = req.query["programId"] ? Number(req.query["programId"]) : undefined;
   res.json(await listAllocations(programId));
 });
 
+// GET /allocations/summary
+router.get("/allocations/summary", requireAuth, async (req, res) => {
+  const programId = req.query["programId"] ? Number(req.query["programId"]) : null;
+  if (!programId) { res.status(400).json({ error: "programId required" }); return; }
+
+  try {
+    const entries = await db.select().from(seatMatrixEntriesTable).where(eq(seatMatrixEntriesTable.programId, programId));
+    const allocs = await db.select().from(allocationsTable).where(eq(allocationsTable.programId, programId));
+    const candidates = await db.select().from(candidatesTable);
+
+    let totalSeats = 0;
+    let filledSeats = 0;
+    for (const e of entries) {
+      totalSeats += e.totalSeats;
+      filledSeats += e.allocatedSeats;
+    }
+
+    const waitingList = allocs
+      .filter((a) => a.status === "WAITLISTED")
+      .sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999))
+      .map((a) => {
+        const c = candidates.find((x) => x.id === a.candidateId);
+        return {
+          id: a.id,
+          candidateName: c?.fullName ?? "",
+          candidateCode: c?.candidateCode ?? "",
+          rank: a.rank,
+          totalScore: a.totalScore,
+        };
+      });
+
+    res.json({
+      totalSeats,
+      filledSeats,
+      vacantSeats: totalSeats - filledSeats,
+      waitingList,
+      occupancy: entries.map((e) => ({
+        id: e.id,
+        speciality: e.speciality,
+        unitName: e.unitName,
+        totalSeats: e.totalSeats,
+        allocatedSeats: e.allocatedSeats,
+        vacantSeats: e.totalSeats - e.allocatedSeats,
+      })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// POST /allocations/run
+router.post("/allocations/run", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  const { programId } = req.body as { programId: number };
+  if (!programId) { res.status(400).json({ error: "programId required" }); return; }
+
+  try {
+    const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
+    const allUnits = await db.select().from(unitsTable);
+    const unitMap = new Map<string, number>(allUnits.map(u => [u.name.toLowerCase().trim(), u.id]));
+
+    // Compute NEET merit list
+    const ranked = await computeScoresForProgram(programId);
+
+    // Clear previous allocations and reset seat matrix counts
+    await db.delete(allocationsTable).where(eq(allocationsTable.programId, programId));
+    await db.update(seatMatrixEntriesTable)
+      .set({ allocatedSeats: 0 })
+      .where(eq(seatMatrixEntriesTable.programId, programId));
+
+    const seatEntries = await db.select().from(seatMatrixEntriesTable).where(eq(seatMatrixEntriesTable.programId, programId));
+
+    let selected = 0;
+    let waitlisted = 0;
+    let rejected = 0;
+
+    // Sequentially allocate based on rank, speciality preferences, and location lists
+    for (let i = 0; i < ranked.length; i++) {
+      const r = ranked[i]!;
+      let allocated = false;
+
+      for (const specId of r.preferenceSpecIds) {
+        if (allocated) break;
+        const spec = specs.find(s => s.id === specId);
+        if (!spec) continue;
+
+        const preferredLocs = r.preferredLocations[specId] || [];
+        for (const locName of preferredLocs) {
+          const entry = seatEntries.find(
+            e => e.speciality.toLowerCase().trim() === spec.name.toLowerCase().trim() &&
+                 e.unitName.toLowerCase().trim() === locName.toLowerCase().trim()
+          );
+
+          if (entry && entry.allocatedSeats < entry.totalSeats) {
+            entry.allocatedSeats += 1;
+            
+            await db.update(seatMatrixEntriesTable)
+              .set({ allocatedSeats: entry.allocatedSeats })
+              .where(eq(seatMatrixEntriesTable.id, entry.id));
+
+            const unitId = unitMap.get(locName.toLowerCase().trim()) || null;
+            await db.insert(allocationsTable).values({
+              candidateId: r.candidateId,
+              programId,
+              specialityId: specId,
+              unitId,
+              status: "Provisionally Allocated",
+              rank: i + 1,
+              totalScore: r.totalScore,
+            });
+
+            await db.update(candidatesTable)
+              .set({ status: "allocated" })
+              .where(eq(candidatesTable.id, r.candidateId));
+
+            allocated = true;
+            selected++;
+            break;
+          }
+        }
+      }
+
+      if (!allocated) {
+        await db.insert(allocationsTable).values({
+          candidateId: r.candidateId,
+          programId,
+          specialityId: null,
+          unitId: null,
+          status: "WAITLISTED",
+          rank: i + 1,
+          totalScore: r.totalScore,
+        });
+
+        await db.update(candidatesTable)
+          .set({ status: "waitlisted" })
+          .where(eq(candidatesTable.id, r.candidateId));
+
+        waitlisted++;
+      }
+    }
+
+    res.json({ success: true, selected, waitlisted, rejected });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// GET /allocations/me
 router.get("/allocations/me", requireAuth, requireRole("student"), async (req, res) => {
   const [c] = await db.select().from(candidatesTable).where(eq(candidatesTable.userId, req.user!.userId));
   if (!c) { res.status(404).json({ error: "Candidate not found" }); return; }
@@ -121,6 +209,68 @@ router.get("/allocations/me", requireAuth, requireRole("student"), async (req, r
   res.json(out);
 });
 
+// POST /allocations/action - Freeze, Float, Withdraw
+router.post("/allocations/action", requireAuth, requireRole("student"), async (req, res) => {
+  try {
+    const { action } = req.body as { action: string };
+    if (!action) { res.status(400).json({ error: "action is required" }); return; }
+
+    const [candidate] = await db.select().from(candidatesTable).where(eq(candidatesTable.userId, req.user!.userId));
+    if (!candidate) { res.status(404).json({ error: "Candidate not found" }); return; }
+
+    const [allocation] = await db.select().from(allocationsTable).where(eq(allocationsTable.candidateId, candidate.id));
+    if (!allocation) { res.status(404).json({ error: "No allocation found" }); return; }
+
+    let targetStatus = "";
+    if (action.toLowerCase() === "freeze" || action === "Accepted") {
+      targetStatus = "Accepted";
+    } else if (action.toLowerCase() === "float" || action === "Upgraded") {
+      targetStatus = "Upgraded";
+    } else if (action.toLowerCase() === "withdraw" || action === "Withdrawn") {
+      targetStatus = "Withdrawn";
+    } else {
+      res.status(400).json({ error: "Invalid action" });
+      return;
+    }
+
+    // Vacate seat if candidate withdraws
+    if (targetStatus === "Withdrawn" && allocation.status !== "Withdrawn") {
+      if (allocation.specialityId && allocation.unitId) {
+        const [spec] = await db.select().from(specialitiesTable).where(eq(specialitiesTable.id, allocation.specialityId));
+        const [unit] = await db.select().from(unitsTable).where(eq(unitsTable.id, allocation.unitId));
+
+        if (spec && unit) {
+          const [entry] = await db.select().from(seatMatrixEntriesTable).where(
+            and(
+              eq(seatMatrixEntriesTable.programId, allocation.programId),
+              eq(seatMatrixEntriesTable.speciality, spec.name),
+              eq(seatMatrixEntriesTable.unitName, unit.name)
+            )
+          );
+          if (entry) {
+            await db.update(seatMatrixEntriesTable)
+              .set({ allocatedSeats: Math.max(0, entry.allocatedSeats - 1) })
+              .where(eq(seatMatrixEntriesTable.id, entry.id));
+          }
+        }
+      }
+    }
+
+    await db.update(allocationsTable)
+      .set({ status: targetStatus })
+      .where(eq(allocationsTable.id, allocation.id));
+
+    await db.update(candidatesTable)
+      .set({ status: targetStatus === "Withdrawn" ? "rejected" : "allocated" })
+      .where(eq(candidatesTable.id, candidate.id));
+
+    res.json({ success: true, status: targetStatus });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// POST /allocations/:allocationId/override
 router.post("/allocations/:allocationId/override", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
   const id = Number(req.params["allocationId"]);
   const { specialityId, status } = req.body as { specialityId?: number | null; status: string };
@@ -133,16 +283,17 @@ router.post("/allocations/:allocationId/override", requireAuth, requireRole("sup
     status: status === "SELECTED" ? "allocated" : status === "WAITLISTED" ? "waitlisted" : "rejected",
   }).where(eq(candidatesTable.id, a.candidateId));
 
-  // If status changed away from SELECTED, promote highest-ranked WAITLISTED candidate (if any) for that program
-  if (status !== "SELECTED" && a.specialityId == null) {
+  // If status changed away from SELECTED/Accepted, promote highest-ranked WAITLISTED candidate
+  if (status !== "SELECTED" && status !== "Accepted" && a.specialityId == null) {
     const allocs = await db.select().from(allocationsTable).where(eq(allocationsTable.programId, a.programId));
     const wl = allocs.filter((x) => x.status === "WAITLISTED").sort((x, y) => (x.rank ?? 9999) - (y.rank ?? 9999))[0];
     const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, a.programId));
     if (wl) {
-      // try to find an open speciality matching their preferences
       const filledBySpec = new Map<number, number>();
       for (const x of allocs) {
-        if (x.status === "SELECTED" && x.specialityId != null) filledBySpec.set(x.specialityId, (filledBySpec.get(x.specialityId) ?? 0) + 1);
+        if ((x.status === "SELECTED" || x.status === "Accepted") && x.specialityId != null) {
+          filledBySpec.set(x.specialityId, (filledBySpec.get(x.specialityId) ?? 0) + 1);
+        }
       }
       const openSpec = specs.find((s) => (filledBySpec.get(s.id) ?? 0) < s.seats);
       if (openSpec) {
@@ -160,6 +311,7 @@ router.post("/allocations/:allocationId/override", requireAuth, requireRole("sup
   res.json(out);
 });
 
+// GET /allocations/:allocationId/letter
 router.get("/allocations/:allocationId/letter", requireAuth, async (req, res) => {
   const id = Number(req.params["allocationId"]);
   const [a] = await db.select().from(allocationsTable).where(eq(allocationsTable.id, id));

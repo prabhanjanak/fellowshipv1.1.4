@@ -2,7 +2,7 @@ import { Router } from "express";
 import { DEFAULT_SECTIONS } from "../lib/default-sections";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-import { db, applicationFormsTable, applicationSubmissionsTable, programsTable, candidatesTable, candidatePreferencesTable, specialitiesTable, paymentSettingsTable, documentsTable } from "@workspace/db";
+import { db, applicationFormsTable, applicationSubmissionsTable, programsTable, candidatesTable, candidatePreferencesTable, specialitiesTable, paymentSettingsTable, documentsTable, applicationsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import * as XLSX from "xlsx";
 import { sendApplicationApprovalEmail } from "../lib/email";
@@ -11,7 +11,7 @@ import fs from "fs/promises";
 import { createWriteStream } from "fs";
 import path from "path";
 import PDFDocument from "pdfkit";
-import { parseSpecializationString, formatDOBToStandard } from "../lib/utils";
+import { parseSpecializationString, formatDOBToStandard, formatToDDMMYYYY, formatToLocalDateTime } from "../lib/utils";
 
 const router: Router = Router();
 
@@ -403,11 +403,18 @@ router.get(
   async (req: any, res) => {
     const formId = Number(req.params.id);
     const subs = await db
-      .select()
+      .select({
+        submission: applicationSubmissionsTable,
+        candidateCode: candidatesTable.candidateCode
+      })
       .from(applicationSubmissionsTable)
+      .leftJoin(candidatesTable, eq(candidatesTable.id, applicationSubmissionsTable.candidateId))
       .where(and(eq(applicationSubmissionsTable.formId, formId), eq(applicationSubmissionsTable.isMock, req.isMockMode)))
       .orderBy(desc(applicationSubmissionsTable.submittedAt));
-    res.json(subs);
+    res.json(subs.map(s => ({
+      ...s.submission,
+      candidateCode: s.candidateCode || null
+    })));
   }
 );
 
@@ -452,10 +459,10 @@ router.get(
 
       const baseRow: Record<string, any> = {
         "Submission ID": s.id,
-        "Date": s.submittedAt ? new Date(s.submittedAt).toISOString().split('T')[0] : "",
+        "Date": formatToDDMMYYYY(s.submittedAt),
         "Specialities": specString,
         "Retina/Anterior": segmentString || "Anterior",
-        "Timestamp": s.submittedAt ? new Date(s.submittedAt).toLocaleString("en-IN") : "",
+        "Timestamp": formatToLocalDateTime(s.submittedAt),
         "Name in Full (First Name, Middle Name, Last/Family Name)": s.fullName,
         "E-mail (this would be the ID all communication would be shared on)": s.email,
         "Mobile Number (only 10 digits)": s.phone ?? "",
@@ -636,7 +643,8 @@ router.patch(
       "specialization", "centerPreference", "customAnswers", "readyForReview",
       "gender", "pgQualifications", "doQualification", "doDetails", 
       "msMdQualification", "msMdDetails", "dnbQualification", "dnbDetails",
-      "otherTraining", "publications", "presentations", "otherInformation"
+      "otherTraining", "publications", "presentations", "otherInformation",
+      "lor1Url", "lor2Url", "photoUrl"
     ];
 
     possibleFields.forEach(field => {
@@ -659,9 +667,9 @@ router.patch(
       .returning();
     if (!updated) return res.status(404).json({ error: "Submission not found" });
 
-    // If status is updated to 'approved' or 'reviewed', ensure candidate is created
     if (updates.status === "approved" || updates.status === "reviewed") {
       const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, updated.email));
+      let candidateId: number;
       if (existing.length === 0) {
         const year = new Date().getFullYear();
         const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -679,6 +687,7 @@ router.patch(
           collegeName: updated.medicalCollege ?? null,
           status: "pending",
         }).returning();
+        candidateId = candidate!.id;
 
         if (updated.specialization && candidate) {
           const specList = parseSpecializationString(updated.specialization);
@@ -693,6 +702,43 @@ router.patch(
                   specialityId: spec.id,
                   preferenceOrder: order++,
                 }).onConflictDoNothing();
+              }
+            }
+          }
+        }
+      } else {
+        candidateId = existing[0]!.id;
+      }
+
+      // Ensure Applications exist for this candidateId
+      if (updated.specialization) {
+        const specList = parseSpecializationString(updated.specialization);
+        if (Array.isArray(specList) && specList.length > 0) {
+          const specs = await db.select().from(specialitiesTable);
+          for (const specName of specList) {
+            const spec = specs.find((s) => s.name.toLowerCase() === specName.toLowerCase());
+            if (spec) {
+              const existingApp = await db.select().from(applicationsTable).where(
+                and(
+                  eq(applicationsTable.candidateId, candidateId),
+                  eq(applicationsTable.specialityId, spec.id)
+                )
+              );
+              if (existingApp.length === 0) {
+                const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+                const year = 2026;
+                const countResult = await db.execute(sql`
+                  SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+                `);
+                const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+                const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+                await db.insert(applicationsTable).values({
+                  candidateId,
+                  specialityId: spec.id,
+                  hallTicketNumber,
+                  status: "approved",
+                });
               }
             }
           }
@@ -719,8 +765,45 @@ router.post(
     const subEmail = sub.email.toLowerCase().trim();
     const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, subEmail));
     if (existing.length > 0) {
-      await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: existing[0]!.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
-      return res.json({ message: "Candidate already exists", candidateId: existing[0]!.id });
+      const candidateId = existing[0]!.id;
+      await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+      
+      // Ensure Applications exist for existing candidate
+      if (sub.specialization) {
+        const specList = parseSpecializationString(sub.specialization);
+        if (Array.isArray(specList) && specList.length > 0) {
+          const specs = await db.select().from(specialitiesTable);
+          for (const specName of specList) {
+            const spec = specs.find((s) => s.name.toLowerCase() === specName.toLowerCase());
+            if (spec) {
+              const existingApp = await db.select().from(applicationsTable).where(
+                and(
+                  eq(applicationsTable.candidateId, candidateId),
+                  eq(applicationsTable.specialityId, spec.id)
+                )
+              );
+              if (existingApp.length === 0) {
+                const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+                const year = 2026;
+                const countResult = await db.execute(sql`
+                  SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+                `);
+                const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+                const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+                await db.insert(applicationsTable).values({
+                  candidateId,
+                  specialityId: spec.id,
+                  hallTicketNumber,
+                  status: "approved",
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return res.json({ message: "Candidate already exists", candidateId });
     }
 
     const year = new Date().getFullYear();
@@ -758,6 +841,30 @@ router.post(
               specialityId: spec.id,
               preferenceOrder: order++,
             });
+
+            // Ensure Application is created
+            const existingApp = await db.select().from(applicationsTable).where(
+              and(
+                eq(applicationsTable.candidateId, candidate.id),
+                eq(applicationsTable.specialityId, spec.id)
+              )
+            );
+            if (existingApp.length === 0) {
+              const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+              const year = 2026;
+              const countResult = await db.execute(sql`
+                SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+              `);
+              const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+              const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+              await db.insert(applicationsTable).values({
+                candidateId: candidate.id,
+                specialityId: spec.id,
+                hallTicketNumber,
+                status: "approved",
+              });
+            }
           }
         }
       }
@@ -853,7 +960,44 @@ router.post(
           const subEmail = sub.email.toLowerCase().trim();
           const existing = await db.select().from(candidatesTable).where(eq(candidatesTable.email, subEmail));
           if (existing.length > 0) {
-            await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId: existing[0]!.id, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+            const candidateId = existing[0]!.id;
+            await db.update(applicationSubmissionsTable).set({ status: "approved", candidateId, reviewedAt: new Date() }).where(eq(applicationSubmissionsTable.id, id));
+            
+            // Ensure Applications exist for existing candidate in bulk approval
+            if (sub.specialization) {
+              const specList = parseSpecializationString(sub.specialization);
+              if (Array.isArray(specList) && specList.length > 0) {
+                const specs = await db.select().from(specialitiesTable);
+                for (const specName of specList) {
+                  const spec = specs.find((s) => s.name.toLowerCase() === specName.toLowerCase());
+                  if (spec) {
+                    const existingApp = await db.select().from(applicationsTable).where(
+                      and(
+                        eq(applicationsTable.candidateId, candidateId),
+                        eq(applicationsTable.specialityId, spec.id)
+                      )
+                    );
+                    if (existingApp.length === 0) {
+                      const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+                      const year = 2026;
+                      const countResult = await db.execute(sql`
+                        SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+                      `);
+                      const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+                      const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+                      await db.insert(applicationsTable).values({
+                        candidateId,
+                        specialityId: spec.id,
+                        hallTicketNumber,
+                        status: "approved",
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
             approved++;
             continue;
           }
@@ -891,6 +1035,30 @@ router.post(
                     specialityId: spec.id,
                     preferenceOrder: order++,
                   }).onConflictDoNothing();
+
+                  // Ensure Application is created in bulk approval
+                  const existingApp = await db.select().from(applicationsTable).where(
+                    and(
+                      eq(applicationsTable.candidateId, candidate.id),
+                      eq(applicationsTable.specialityId, spec.id)
+                    )
+                  );
+                  if (existingApp.length === 0) {
+                    const prefix = spec.code ? spec.code.toUpperCase() : "GEN";
+                    const year = 2026;
+                    const countResult = await db.execute(sql`
+                      SELECT COUNT(*)::int as count FROM applications WHERE speciality_id = ${spec.id} AND hall_ticket_number IS NOT NULL
+                    `);
+                    const seq = Number(countResult.rows[0]?.count ?? 0) + 1;
+                    const hallTicketNumber = `${prefix}-${year}-${String(seq).padStart(3, "0")}`;
+
+                    await db.insert(applicationsTable).values({
+                      candidateId: candidate.id,
+                      specialityId: spec.id,
+                      hallTicketNumber,
+                      status: "approved",
+                    });
+                  }
                 }
               }
             }

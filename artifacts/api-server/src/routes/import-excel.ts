@@ -2,7 +2,7 @@ import { Router } from "express";
 import * as fs from "fs";
 import * as path from "path";
 import * as XLSX from "xlsx";
-import { db, candidatesTable, specialitiesTable, candidatePreferencesTable, documentsTable, programsTable } from "@workspace/db";
+import { db, candidatesTable, specialitiesTable, candidatePreferencesTable, documentsTable, programsTable, applicationsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -263,6 +263,21 @@ router.post("/import/excel", requireAuth, requireRole("super_admin", "central_ex
           specialityId: specId,
           preferenceOrder: prefOrder++,
         });
+
+        // Also insert into applicationsTable as pending (since imported candidate is pending by default)
+        const existingApp = await db.select().from(applicationsTable).where(
+          and(
+            eq(applicationsTable.candidateId, candidateId),
+            eq(applicationsTable.specialityId, specId)
+          )
+        );
+        if (existingApp.length === 0) {
+          await db.insert(applicationsTable).values({
+            candidateId,
+            specialityId: specId,
+            status: "pending",
+          });
+        }
       }
 
       // --- Step 6: Upsert documents (Drive links) ---
@@ -530,6 +545,21 @@ router.post("/import/excel/process", requireAuth, requireRole("super_admin", "ce
                 specialityId: specId,
                 preferenceOrder: group.specializations.findIndex((s) => s.specName === specName) + 1,
               }).onConflictDoNothing();
+
+              // Ensure Application is created
+              const existingApp = await db.select().from(applicationsTable).where(
+                and(
+                  eq(applicationsTable.candidateId, newCand.id),
+                  eq(applicationsTable.specialityId, specId)
+                )
+              );
+              if (existingApp.length === 0) {
+                await db.insert(applicationsTable).values({
+                  candidateId: newCand.id,
+                  specialityId: specId,
+                  status: "pending",
+                });
+              }
             }
           }
 

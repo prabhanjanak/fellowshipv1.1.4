@@ -16,12 +16,52 @@ router.post("/storage/uploads/request-url", requireAuth, async (req: Request, re
     return;
   }
   try {
+    const isReplit = !!process.env.REPL_ID;
+    if (!isReplit) {
+      // Local fallback for Windows
+      const objectId = Math.random().toString(36).substring(2, 10);
+      const ext = name.split('.').pop() ?? "bin";
+      const sanitizedName = name.split('.')[0].replace(/[^a-zA-Z0-9]/g, "_");
+      const filename = `${sanitizedName}_${objectId}.${ext}`;
+      
+      const uploadURL = `/api/storage/local-upload/${filename}`;
+      const objectPath = `/objects/uploads/${filename}`;
+      return res.json({ uploadURL, objectPath, metadata: { name: name.trim(), size, contentType } });
+    }
+
     const uploadURL = await objectStorageService.getObjectEntityUploadURL();
     const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
     res.json({ uploadURL, objectPath, metadata: { name: name.trim(), size, contentType } });
   } catch (error) {
-    req.log.error({ err: error }, "Error generating upload URL");
+    req.log?.error?.({ err: error }, "Error generating upload URL");
     res.status(500).json({ error: "Failed to generate upload URL" });
+  }
+});
+
+import { createWriteStream } from "fs";
+
+router.put("/storage/local-upload/:filename", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const uploadDir = path.join(process.cwd(), "uploads");
+    const fsPromises = await import("fs/promises");
+    await fsPromises.mkdir(uploadDir, { recursive: true });
+
+    const filePath = path.join(uploadDir, req.params.filename as string);
+    const writeStream = createWriteStream(filePath);
+
+    req.pipe(writeStream);
+
+    writeStream.on("finish", () => {
+      res.json({ success: true, path: `/objects/uploads/${req.params.filename}` });
+    });
+
+    writeStream.on("error", (err) => {
+      req.log?.error?.({ err }, "Error writing file");
+      res.status(500).json({ error: "Failed to upload file" });
+    });
+  } catch (error) {
+    req.log?.error?.({ err: error }, "Error in local upload");
+    res.status(500).json({ error: "Local upload failed" });
   }
 });
 
@@ -62,16 +102,21 @@ router.get("/storage/objects/*path", requireAuth, requireRole("super_admin", "pr
     }
 
     // IDOR protection: verify this path is a known document in application_submissions
-    const found = await db.execute(sql`
-      SELECT 1 FROM application_submissions
-      WHERE lor1_url = ${objectPath} OR lor2_url = ${objectPath}
-         OR photo_url = ${objectPath} OR payment_url = ${objectPath}
-      LIMIT 1
-    `);
+    // Super/program admins may access any upload (e.g. freshly replaced files)
+    const reqUser = (req as any).user;
+    const isAdminRole = reqUser && ["super_admin", "program_admin", "central_exam_coordinator"].includes(reqUser.role);
 
-    if (found.rows.length === 0) {
-      res.status(404).json({ error: "Object not found" });
-      return;
+    if (!isAdminRole) {
+      const found = await db.execute(sql`
+        SELECT 1 FROM application_submissions
+        WHERE lor1_url = ${objectPath} OR lor2_url = ${objectPath}
+           OR photo_url = ${objectPath} OR payment_url = ${objectPath}
+        LIMIT 1
+      `);
+      if (found.rows.length === 0) {
+        res.status(404).json({ error: "Object not found" });
+        return;
+      }
     }
 
     const isReplit = !!process.env.REPL_ID;

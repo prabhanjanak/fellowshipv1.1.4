@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { fmtDate, fmtTime } from "../lib/dateUtils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -24,6 +25,30 @@ import { RadioGroup, RadioGroupItem } from "../components/ui/radio-group";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "../hooks/use-toast";
 import QRCode from "react-qr-code";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  Cell,
+  PieChart,
+  Pie,
+  Legend,
+} from "recharts";
+import {
+  BookOpen,
+  Award,
+  ClipboardList,
+  Activity,
+  Sparkles,
+  Briefcase,
+  TrendingUp,
+  Percent,
+} from "lucide-react";
+
 
 interface CustomField {
   id: string;
@@ -147,7 +172,7 @@ function parseCenterPreferences(cp: string | null | undefined, customAnswers?: a
   return {};
 }
 
-function SubmissionFormDataEditor({ sectionsConfig, formData, onChange }: { sectionsConfig: any[], formData: any, onChange: (newData: any) => void }) {
+function SubmissionFormDataEditor({ sectionsConfig, formData, onChange, onFileUpload }: { sectionsConfig: any[], formData: any, onChange: (newData: any) => void, onFileUpload?: (field: string, url: string) => void }) {
   const updateField = (id: string, mapping: string | undefined, value: any, isStandard?: boolean) => {
     if (isStandard && mapping) {
       onChange({ ...formData, [mapping]: value });
@@ -403,9 +428,18 @@ function SubmissionFormDataEditor({ sectionsConfig, formData, onChange }: { sect
                         </tbody>
                       </table>
                     </div>
+                  ) : field.type === 'file' ? (
+                    <FileFieldEditor
+                      label={field.label}
+                      currentUrl={val ? String(val) : null}
+                      onUploaded={(url) => {
+                        updateField(field.id, field.mapping, url, field.isStandard);
+                        onFileUpload?.(field.id, url);
+                      }}
+                    />
                   ) : (
                     <div className="text-xs text-muted-foreground italic p-4 border rounded-xl border-dashed bg-slate-50">
-                      Response data: {JSON.stringify(val)}
+                      {val ? String(val) : 'No data'}
                     </div>
                   )}
                 </div>
@@ -414,6 +448,110 @@ function SubmissionFormDataEditor({ sectionsConfig, formData, onChange }: { sect
           </div>
         </motion.div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Inline file upload editor for LOR / Passport photo inside the edit submission form.
+ * Uses the same two-step presigned-URL flow as the candidate apply form.
+ */
+function FileFieldEditor({ label, currentUrl, onUploaded }: { label: string; currentUrl: string | null; onUploaded: (url: string) => void }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadedName, setUploadedName] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const isPhoto = label.toLowerCase().includes('photo');
+  const isLor = label.toLowerCase().includes('lor') || label.toLowerCase().includes('recommendation');
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    setUploading(true);
+    try {
+      const token = localStorage.getItem('fellowship_token');
+
+      // Step 1: Request presigned upload URL
+      const urlRes = await fetch('/api/storage/uploads/request-url', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: file.name, contentType: file.type, size: file.size }),
+      });
+      if (!urlRes.ok) throw new Error(`Failed to get upload URL: ${urlRes.status}`);
+      const { uploadURL, objectPath } = await urlRes.json();
+
+      // Step 2: PUT file to presigned URL
+      const putRes = await fetch(uploadURL, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!putRes.ok) throw new Error(`Upload failed: ${putRes.status}`);
+
+      onUploaded(objectPath);
+      setUploadedName(file.name);
+
+      if (isPhoto) {
+        const blobUrl = URL.createObjectURL(file);
+        setPreview(blobUrl);
+      }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {(uploadedName || currentUrl) && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-emerald-600 font-bold">✓ {uploadedName ? 'Uploaded:' : 'File on record:'}</span>
+          <span className="text-slate-500 truncate max-w-[220px] font-mono">
+            {uploadedName || currentUrl?.split('/').pop()}
+          </span>
+        </div>
+      )}
+      {preview && isPhoto && (
+        <img src={preview} alt="Preview" className="h-24 w-20 object-cover rounded-lg border-2 border-orange-200 shadow-sm" />
+      )}
+      <div
+        className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer ${
+          uploading ? 'border-orange-300 bg-orange-50/30' : 
+          uploadedName ? 'border-emerald-300 bg-emerald-50/20' :
+          'border-slate-200 hover:border-orange-400 hover:bg-orange-50/10'
+        }`}
+        onClick={() => inputRef.current?.click()}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          className="hidden"
+          accept={isLor ? '.pdf' : isPhoto ? '.jpg,.jpeg,.png' : '.pdf,.jpg,.jpeg,.png'}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+        />
+        {uploading ? (
+          <div className="flex items-center justify-center gap-2 text-sm text-orange-600 font-bold">
+            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+            </svg>
+            Uploading...
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500 font-medium">
+            {uploadedName ? '✓ Replace again?' : currentUrl ? `Click to replace ${label}` : `Click to upload ${label}`}
+            <span className="block text-[10px] mt-1 text-slate-400">
+              {isLor ? 'PDF only (max 5MB)' : isPhoto ? 'JPG / JPEG / PNG' : 'PDF or Image'}
+            </span>
+          </p>
+        )}
+      </div>
+      {error && <p className="text-xs text-red-500 font-bold">{error}</p>}
     </div>
   );
 }
@@ -841,6 +979,7 @@ export default function ApplicationFormsPage() {
   const [editSectionsConfig, setEditSectionsConfig] = useState<any[]>([]);
   const [photoBlobUrl, setPhotoBlobUrl] = useState<string | null>(null);
   const [specFilter, setSpecFilter] = useState<string>("all");
+  const [sortFilter, setSortFilter] = useState<"time_desc" | "time_asc" | "name_asc" | "name_desc">("time_desc");
 
   // Google Sheets integration state (per edit dialog + success dialog)
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState({ spreadsheetId: "", sheetName: "Form Responses 1", serviceAccountJson: "" });
@@ -868,7 +1007,7 @@ export default function ApplicationFormsPage() {
   }, [editFormGsData, editForm?.id]);
 
   // Submissions list UI state
-  const [statusFilter, setStatusFilter] = useState<"all" | "ready" | "pending" | "approved" | "rejected">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
 
@@ -937,10 +1076,15 @@ export default function ApplicationFormsPage() {
   });
 
   const updateSubmission = useMutation({
-    mutationFn: ({ id, status, reviewNotes, formData, fullName, email, phone }: any) => 
-      api.patch(`/application-forms/submissions/${id}`, { status, reviewNotes, formData, fullName, email, phone }),
-    onSuccess: () => {
-      toast({ title: "Submission updated" });
+    mutationFn: (payload: any) => {
+      const { id, ...body } = payload;
+      return api.patch<any>(`/application-forms/submissions/${id}`, body);
+    },
+    onSuccess: (updated) => {
+      // Directly update the cached submissions list so the UI sees the change instantly
+      qc.setQueryData(["submissions", viewFormId], (old: any[]) =>
+        old ? old.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)) : old
+      );
       qc.invalidateQueries({ queryKey: ["submissions", viewFormId] });
       qc.invalidateQueries({ queryKey: ["application-forms"] });
     },
@@ -1189,11 +1333,7 @@ export default function ApplicationFormsPage() {
   const handleEditData = () => {
     if (!viewedSub) return;
     setTempFormData({ 
-      fullName: viewedSub.fullName,
-      email: viewedSub.email,
-      phone: viewedSub.phone,
-      status: viewedSub.status,
-      reviewNotes: viewedSub.reviewNotes,
+      ...viewedSub,
       formData: { ...viewedSub.formData }
     });
     setIsEditingData(true);
@@ -1201,14 +1341,14 @@ export default function ApplicationFormsPage() {
 
   const handleSaveData = () => {
     if (!viewedSub) return;
-    updateSubmission.mutate({ 
-      id: viewedSub.id, 
-      ...tempFormData
-    }, {
-      onSuccess: (updated) => {
-        setActiveSubDetail(updated);
+    // Send ALL fields via tempFormData, the backend will filter out non-allowed fields
+    updateSubmission.mutate(tempFormData, {
+      onSuccess: () => {
         setIsEditingData(false);
-        toast({ title: "Submission Updated", description: "The submission has been updated successfully." });
+        toast({ title: "Submission Updated", description: "Changes saved successfully." });
+      },
+      onError: (e: any) => {
+        toast({ title: "Save Failed", description: e.message, variant: "destructive" });
       }
     });
   };
@@ -1536,7 +1676,18 @@ export default function ApplicationFormsPage() {
                         <SubmissionFormDataEditor 
                           sectionsConfig={viewedForm?.sectionsConfig || []} 
                           formData={tempFormData} 
-                          onChange={(newData) => setTempFormData(newData)} 
+                          onChange={(newData) => setTempFormData(newData)}
+                          onFileUpload={(fieldId, url) => {
+                             // Also update standard top-level fields if field is a known mapped one
+                             const fieldLower = fieldId.toLowerCase();
+                             if (fieldLower.includes('lor1') || fieldLower === 'lor1url') {
+                               setTempFormData((prev: any) => ({ ...prev, lor1Url: url }));
+                             } else if (fieldLower.includes('lor2') || fieldLower === 'lor2url') {
+                               setTempFormData((prev: any) => ({ ...prev, lor2Url: url }));
+                             } else if (fieldLower.includes('photo') || fieldLower === 'photourl') {
+                               setTempFormData((prev: any) => ({ ...prev, photoUrl: url }));
+                             }
+                           }}
                         />
                      </CardContent>
                   </Card>
@@ -1804,15 +1955,37 @@ export default function ApplicationFormsPage() {
 
   // Submissions list view
   if (viewFormId !== null) {
-    
-    
+    if (subsLoading) {
+      return (
+        <div className="flex items-center justify-center min-h-[500px]">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-10 w-10 animate-spin text-orange-600" />
+            <p className="text-sm font-semibold text-slate-500 uppercase tracking-widest animate-pulse">
+              Loading Submissions Queue...
+            </p>
+          </div>
+        </div>
+      );
+    }
+
     const filteredSubs = submissions.filter((s) => {
-      const statusMatch = statusFilter === "all" ? true : (statusFilter === "ready" ? s.readyForReview : s.status === statusFilter);
+      const statusMatch = statusFilter === "all" ? true : s.status === statusFilter;
       const specMatch = specFilter === "all" ? true : parseSpecializations(s.specialization).includes(specFilter);
       return statusMatch && specMatch;
     });
 
-    const readyCount = submissions.filter((s) => s.readyForReview).length;
+    const sortedSubs = [...filteredSubs].sort((a, b) => {
+      if (sortFilter === "time_desc") {
+        return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+      } else if (sortFilter === "time_asc") {
+        return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+      } else if (sortFilter === "name_asc") {
+        return a.fullName.localeCompare(b.fullName);
+      } else if (sortFilter === "name_desc") {
+        return b.fullName.localeCompare(a.fullName);
+      }
+      return 0;
+    });
     
     // Get unique specializations for filter
     const allSpecs = Array.from(new Set(submissions.flatMap(s => parseSpecializations(s.specialization)))).sort();
@@ -1822,9 +1995,74 @@ export default function ApplicationFormsPage() {
       if (allFilteredSelected) setSelectedIds([]);
       else setSelectedIds(filteredSubs.map((s) => s.id));
     };
-    const totalApplications = submissions.length;
+    const totalApplications = submissions.reduce((acc, s) => acc + parseSpecializations(s.specialization).length, 0);
+    const totalApplicants = submissions.length;
+    const approvedCandidatesCount = submissions.filter(s => ['approved', 'verified', 'scheduled', 'interviewed', 'completed'].includes(s.status)).length;
+    const pendingCount = submissions.filter(s => s.status === 'pending').length;
+
     const today = new Date().toLocaleDateString("en-IN");
     const todayApplications = submissions.filter((s) => new Date(s.submittedAt).toLocaleDateString("en-IN") === today).length;
+
+    // Retina vs Anterior Segment calculations
+    let vrsCount = 0;
+    let mrCount = 0;
+    let corneaCount = 0;
+    let cataractCount = 0;
+    let glaucomaCount = 0;
+    let pediatricCount = 0;
+    let orbitCount = 0;
+
+    submissions.forEach(s => {
+      const specs = parseSpecializations(s.specialization);
+      specs.forEach(spec => {
+        const lower = spec.toLowerCase();
+        if (lower.includes("vitreo retina") || lower.includes("vitreoretinal")) {
+          vrsCount++;
+        } else if (lower.includes("medical retina")) {
+          mrCount++;
+        } else if (lower.includes("cornea")) {
+          corneaCount++;
+        } else if (lower.includes("cataract") || lower.includes("refractive") || lower.includes("phaco") || lower.includes("iol")) {
+          cataractCount++;
+        } else if (lower.includes("glaucoma")) {
+          glaucomaCount++;
+        } else if (lower.includes("pediatric")) {
+          pediatricCount++;
+        } else if (lower.includes("orbit") || lower.includes("oculoplast") || lower.includes("oculoplasty")) {
+          orbitCount++;
+        } else {
+          cataractCount++;
+        }
+      });
+    });
+
+    const retinaTotal = vrsCount + mrCount;
+    const anteriorTotal = corneaCount + cataractCount + glaucomaCount + pediatricCount + orbitCount;
+
+    // Chart Data for Subspecialties
+    const subspecialtiesChartData = [
+      { name: "Vitreo Retina", count: vrsCount, fill: "#8b5cf6" },
+      { name: "Medical Retina", count: mrCount, fill: "#a78bfa" },
+      { name: "Cornea", count: corneaCount, fill: "#10b981" },
+      { name: "Cataract/Phaco", count: cataractCount, fill: "#14b8a6" },
+      { name: "Glaucoma", count: glaucomaCount, fill: "#0ea5e9" },
+      { name: "Pediatric", count: pediatricCount, fill: "#f59e0b" },
+      { name: "Orbit/Oculoplasty", count: orbitCount, fill: "#ec4899" },
+    ];
+
+    // Status breakdown data for Donut Chart
+    const statusCounts = {
+      pending: submissions.filter(s => s.status === 'pending').length,
+      approved: submissions.filter(s => ['approved', 'verified', 'scheduled', 'interviewed', 'completed'].includes(s.status)).length,
+      rejected: submissions.filter(s => s.status === 'rejected').length,
+    };
+    const statusChartData = [
+      { name: "Pending Review", value: statusCounts.pending, color: "#f59e0b" },
+      { name: "Approved / Scheduled", value: statusCounts.approved, color: "#10b981" },
+      { name: "Rejected / Declined", value: statusCounts.rejected, color: "#ef4444" },
+    ].filter(item => item.value > 0);
+
+    const conversionRate = totalApplicants > 0 ? Math.round((statusCounts.approved / totalApplicants) * 100) : 0;
 
     const toggleSelect = (id: number) =>
       setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -1855,8 +2093,8 @@ export default function ApplicationFormsPage() {
           
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="rounded-xl border-slate-200 font-bold px-4"
-              onClick={() => syncGoogleSheets.mutate(viewFormId)}
-              disabled={syncGoogleSheets.isPending}>
+               onClick={() => syncGoogleSheets.mutate(viewFormId)}
+               disabled={syncGoogleSheets.isPending}>
               {syncGoogleSheets.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Sync Sheets
             </Button>
@@ -1877,26 +2115,247 @@ export default function ApplicationFormsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-           {[
-             { label: "Total Applicants", value: totalApplications, sub: "Unique applicants registered", color: "blue" },
-             { label: "Today's Applicants", value: todayApplications, sub: today, color: "emerald" },
-             { label: "Candidates", value: submissions.length, sub: "Unique applicants", color: "orange" },
-             { label: "Pending", value: submissions.filter(s => s.status === 'pending').length, sub: "Awaiting review", color: "slate" }
-           ].map((stat, idx) => (
-             <Card key={idx} className="border-none shadow-premium rounded-3xl p-6 bg-white overflow-hidden relative group">
-                <div className={`absolute top-0 right-0 w-24 h-24 bg-${stat.color}-500/5 rounded-full -mr-12 -mt-12 group-hover:scale-110 transition-transform`}></div>
-                <p className={`text-[10px] font-black text-${stat.color}-600 uppercase tracking-widest mb-1`}>{stat.label}</p>
-                <p className="text-3xl font-black text-slate-900">{stat.value}</p>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1 opacity-70">{stat.sub}</p>
-             </Card>
-           ))}
+        {/* Today's Live Performance Bar */}
+        <div className="bg-slate-900 border border-slate-800 rounded-[28px] p-6 relative overflow-hidden flex flex-col md:flex-row justify-between items-center gap-6 shadow-2xl">
+          <div className="absolute top-0 left-0 w-2 h-full bg-orange-500" />
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <span className="absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-70 animate-ping" />
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500" />
+            </div>
+            <div>
+              <div className="text-[10px] font-black text-orange-400 uppercase tracking-widest">TODAY'S ASSESSMENT PROGRESS</div>
+              <h4 className="text-lg font-black text-slate-200">Real-time submissions & conversions overview</h4>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 md:gap-12 w-full md:w-auto">
+            <div className="text-center md:text-left">
+              <div className="text-2xl font-black text-slate-100">{todayApplications}</div>
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Today's Apps</div>
+            </div>
+            <div className="text-center md:text-left">
+              <div className="text-2xl font-black text-indigo-400">{submissions.filter(s => new Date(s.submittedAt).toLocaleDateString("en-IN") === today && parseSpecializations(s.specialization).some(sp => sp.toLowerCase().includes("retina"))).length}</div>
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Retina Today</div>
+            </div>
+            <div className="text-center md:text-left">
+              <div className="text-2xl font-black text-emerald-400">{submissions.filter(s => new Date(s.submittedAt).toLocaleDateString("en-IN") === today && !parseSpecializations(s.specialization).some(sp => sp.toLowerCase().includes("retina"))).length}</div>
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Anterior Today</div>
+            </div>
+            <div className="text-center md:text-left">
+              <div className="text-2xl font-black text-amber-400">{conversionRate}%</div>
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Conversion Rate</div>
+            </div>
+          </div>
         </div>
+
+        {/* Main Overall Statistics Cards */}
+        <div className="grid gap-6 grid-cols-1 md:grid-cols-4">
+          <div className="group relative overflow-hidden rounded-[32px] p-6 bg-white border border-slate-100 shadow-premium transition-all duration-300 hover:shadow-md">
+            <div className="flex justify-between items-start">
+              <div className="p-3 bg-blue-500/10 text-blue-600 rounded-2xl"><Users className="h-6 w-6" /></div>
+              <Badge className="bg-blue-500/10 text-blue-600 border border-blue-500/20 text-[9px] px-2 h-5 uppercase tracking-widest font-black">Cohort Scale</Badge>
+            </div>
+            <div className="mt-6">
+              <h3 className="text-3xl font-black text-slate-900 tracking-tight">{totalApplicants}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Unique Applicants Registered</p>
+            </div>
+          </div>
+          <div className="group relative overflow-hidden rounded-[32px] p-6 bg-white border border-slate-100 shadow-premium transition-all duration-300 hover:shadow-md">
+            <div className="flex justify-between items-start">
+              <div className="p-3 bg-indigo-500/10 text-indigo-600 rounded-2xl"><ClipboardList className="h-6 w-6" /></div>
+              <Badge className="bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 text-[9px] px-2 h-5 uppercase tracking-widest font-black">Applications</Badge>
+            </div>
+            <div className="mt-6">
+              <h3 className="text-3xl font-black text-slate-900 tracking-tight">{totalApplications}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Total Specializations Applied</p>
+            </div>
+          </div>
+          <div className="group relative overflow-hidden rounded-[32px] p-6 bg-white border border-slate-100 shadow-premium transition-all duration-300 hover:shadow-md">
+            <div className="flex justify-between items-start">
+              <div className="p-3 bg-emerald-500/10 text-emerald-600 rounded-2xl"><CheckCircle2 className="h-6 w-6" /></div>
+              <Badge className="bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[9px] px-2 h-5 uppercase tracking-widest font-black">Approved</Badge>
+            </div>
+            <div className="mt-6">
+              <h3 className="text-3xl font-black text-emerald-600 tracking-tight">{approvedCandidatesCount}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Approved & Verified Candidates</p>
+            </div>
+          </div>
+          <div className="group relative overflow-hidden rounded-[32px] p-6 bg-white border border-slate-100 shadow-premium transition-all duration-300 hover:shadow-md">
+            <div className="flex justify-between items-start">
+              <div className="p-3 bg-amber-500/10 text-amber-600 rounded-2xl"><Clock className="h-6 w-6" /></div>
+              <Badge className="bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[9px] px-2 h-5 uppercase tracking-widest font-black">Pending</Badge>
+            </div>
+            <div className="mt-6">
+              <h3 className="text-3xl font-black text-amber-600 tracking-tight">{pendingCount}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Awaiting Academic Review</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Segment-wise Split cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* RETINA SEGMENT CARD */}
+          <div className="rounded-[36px] bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 p-8 shadow-premium text-white relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+            <div className="flex justify-between items-center border-b border-slate-800 pb-5 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-100 tracking-tight">RETINA SEGMENT</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Vitreoretinal & Medical Retina</p>
+                </div>
+              </div>
+              <Badge className="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-black px-3.5 py-1 text-[11px] rounded-full">
+                {retinaTotal} Applications
+              </Badge>
+            </div>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center bg-slate-900/60 p-4 rounded-2xl border border-slate-800/40">
+                <span className="text-slate-300 text-xs font-bold">Vitreoretinal Surgery (Retina - Surgical)</span>
+                <Badge className="bg-indigo-500/20 text-indigo-300 font-bold px-3 py-0.5 rounded-lg border border-indigo-500/30">
+                  {vrsCount}
+                </Badge>
+              </div>
+              <div className="flex justify-between items-center bg-slate-900/60 p-4 rounded-2xl border border-slate-800/40">
+                <span className="text-slate-300 text-xs font-bold">Medical Retina (Retina - Non-Surgical)</span>
+                <Badge className="bg-violet-500/20 text-violet-300 font-bold px-3 py-0.5 rounded-lg border border-violet-500/30">
+                  {mrCount}
+                </Badge>
+              </div>
+            </div>
+            <div className="mt-8 flex justify-between items-center text-[10px] text-slate-500 border-t border-slate-800/60 pt-4">
+              <span>Dynamic tracking active</span>
+              <span>Unique Segment Candidates: {submissions.filter(s => parseSpecializations(s.specialization).some(sp => sp.toLowerCase().includes("retina"))).length}</span>
+            </div>
+          </div>
+
+          {/* ANTERIOR SEGMENT CARD */}
+          <div className="rounded-[36px] bg-gradient-to-br from-emerald-950 via-slate-900 to-teal-900 p-8 shadow-premium text-white relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+            <div className="flex justify-between items-center border-b border-slate-800 pb-5 mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                  <Briefcase className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-100 tracking-tight">ANTERIOR SEGMENT</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Cornea, Cataract, Glaucoma, Pediatric, Orbit</p>
+                </div>
+              </div>
+              <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-black px-3.5 py-1 text-[11px] rounded-full">
+                {anteriorTotal} Applications
+              </Badge>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex justify-between items-center bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/40">
+                <span className="text-slate-300 text-[11px] font-bold">Cornea & External Disease</span>
+                <Badge className="bg-emerald-500/20 text-emerald-300 font-bold px-2 rounded-lg">{corneaCount}</Badge>
+              </div>
+              <div className="flex justify-between items-center bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/40">
+                <span className="text-slate-300 text-[11px] font-bold">Cataract & Refractive</span>
+                <Badge className="bg-teal-500/20 text-teal-300 font-bold px-2 rounded-lg">{cataractCount}</Badge>
+              </div>
+              <div className="flex justify-between items-center bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/40">
+                <span className="text-slate-300 text-[11px] font-bold">Glaucoma</span>
+                <Badge className="bg-sky-500/20 text-sky-400 font-bold px-2 rounded-lg">{glaucomaCount}</Badge>
+              </div>
+              <div className="flex justify-between items-center bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/40">
+                <span className="text-slate-300 text-[11px] font-bold">Pediatric Ophthalmology</span>
+                <Badge className="bg-amber-500/20 text-amber-400 font-bold px-2 rounded-lg">{pediatricCount}</Badge>
+              </div>
+              <div className="flex justify-between items-center bg-slate-900/60 p-3.5 rounded-xl border border-slate-800/40 sm:col-span-2">
+                <span className="text-slate-300 text-[11px] font-bold">Orbit & Oculoplastics</span>
+                <Badge className="bg-rose-500/20 text-rose-400 font-bold px-2 rounded-lg">{orbitCount}</Badge>
+              </div>
+            </div>
+            <div className="mt-8 flex justify-between items-center text-[10px] text-slate-500 border-t border-slate-800/60 pt-4">
+              <span>Dynamic tracking active</span>
+              <span>Unique Segment Candidates: {submissions.filter(s => !parseSpecializations(s.specialization).some(sp => sp.toLowerCase().includes("retina"))).length}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Visual Analytics Charts Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Subspecialty Distribution Chart */}
+          <div className="lg:col-span-2 rounded-[36px] border border-slate-150 bg-white p-6 shadow-premium flex flex-col justify-between">
+            <div>
+              <h3 className="text-lg font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Activity className="h-5 w-5 text-orange-500" /> Specialty Distribution Fill Rate
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 uppercase font-bold tracking-wider">Number of candidates applying for each specialization</p>
+            </div>
+            <div className="h-[280px] w-full mt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={subspecialtiesChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={9} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                  <RechartsTooltip
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: 11, fontWeight: 'bold' }}
+                  />
+                  <Bar dataKey="count" name="Applicants Count" fill="#f97316" radius={[6, 6, 0, 0]}>
+                    {subspecialtiesChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Conversion Pipeline Donut Chart */}
+          <div className="rounded-[36px] border border-slate-150 bg-white p-6 shadow-premium flex flex-col justify-between">
+            <div>
+              <h3 className="text-lg font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Percent className="h-5 w-5 text-orange-500" /> Application Pipeline
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 uppercase font-bold tracking-wider">Admissions funnel & approvals conversion</p>
+            </div>
+            <div className="h-[180px] w-full relative flex items-center justify-center mt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={statusChartData}
+                    innerRadius={50}
+                    outerRadius={70}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {statusChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip contentStyle={{ borderRadius: '12px', border: '1px solid #f1f5f9', fontSize: 11 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute flex flex-col items-center justify-center">
+                <span className="text-2xl font-black text-slate-800">{conversionRate}%</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Conversion</span>
+              </div>
+            </div>
+            <div className="space-y-2 mt-4">
+              {statusChartData.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center text-xs border-b border-slate-50 pb-1.5 last:border-0 last:pb-0">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="text-slate-500 font-bold uppercase tracking-wider text-[10px]">{item.name}</span>
+                  </div>
+                  <span className="font-extrabold text-slate-800">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
            <div className="flex items-center gap-4 flex-wrap">
             <div className="flex gap-1.5 p-1 bg-slate-100 rounded-2xl w-fit">
-              {(["all", "ready", "pending", "approved", "rejected"] as const).map((f) => (
+              {(["all", "pending", "approved", "rejected"] as const).map((f) => (
                 <Button 
                   key={f} 
                   size="sm" 
@@ -1905,7 +2364,7 @@ export default function ApplicationFormsPage() {
                   onClick={() => { setStatusFilter(f); setSelectedIds([]); }}>
                   {f}
                   <Badge className="ml-2 bg-slate-200 text-slate-600 border-none group-hover:bg-slate-300">
-                     {f === "all" ? submissions.length : f === "ready" ? readyCount : submissions.filter((s) => s.status === f).length}
+                     {f === "all" ? submissions.length : submissions.filter((s) => s.status === f).length}
                   </Badge>
                 </Button>
               ))}
@@ -1922,6 +2381,21 @@ export default function ApplicationFormsPage() {
                     {allSpecs.map(spec => (
                       <SelectItem key={spec} value={spec} className="text-[10px] font-black uppercase tracking-widest">{spec}</SelectItem>
                     ))}
+                 </SelectContent>
+               </Select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-white/50 border border-slate-200 p-1.5 rounded-2xl shadow-sm">
+               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Sort By</span>
+               <Select value={sortFilter} onValueChange={(val: any) => setSortFilter(val)}>
+                 <SelectTrigger className="h-8 min-w-[160px] rounded-xl border-none bg-slate-100 hover:bg-slate-200 transition-all text-[10px] font-black uppercase tracking-widest focus:ring-0">
+                    <SelectValue placeholder="Sort Order" />
+                 </SelectTrigger>
+                 <SelectContent className="rounded-2xl border-slate-100 shadow-2xl">
+                    <SelectItem value="time_desc" className="text-[10px] font-black uppercase tracking-widest">Time Applied: Newest</SelectItem>
+                    <SelectItem value="time_asc" className="text-[10px] font-black uppercase tracking-widest">Time Applied: Oldest</SelectItem>
+                    <SelectItem value="name_asc" className="text-[10px] font-black uppercase tracking-widest">Name: A to Z</SelectItem>
+                    <SelectItem value="name_desc" className="text-[10px] font-black uppercase tracking-widest">Name: Z to A</SelectItem>
                  </SelectContent>
                </Select>
             </div>
@@ -1967,7 +2441,7 @@ export default function ApplicationFormsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredSubs.map((s) => (
+                {sortedSubs.map((s) => (
                   <tr key={s.id} className={`group hover:bg-slate-50/50 transition-colors ${selectedIds.includes(s.id) ? "bg-orange-50/30" : ""}`}>
                     <td className="px-6 py-5">
                       <Checkbox checked={selectedIds.includes(s.id)} onCheckedChange={() => toggleSelect(s.id)} className="rounded-md border-slate-300" />
@@ -1979,6 +2453,22 @@ export default function ApplicationFormsPage() {
                            {s.readyForReview && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
                         </span>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{s.email}</span>
+                        {s.centerPreference && (() => {
+                          const prefs = parseCenterPreferences(s.centerPreference, s.formData);
+                          const entries = Object.entries(prefs);
+                          if (entries.length > 0) {
+                            return (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {entries.map(([spec, loc]) => (
+                                  <span key={spec} className="text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-100 rounded-full px-2 py-0.5">
+                                    {spec}: {loc}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          }
+                          return <span className="text-[10px] text-slate-400 mt-0.5">{s.centerPreference}</span>;
+                        })()}
                       </div>
                     </td>
                     <td className="px-6 py-5">
@@ -2004,8 +2494,8 @@ export default function ApplicationFormsPage() {
                       <DocValue label="Payment" url={(s.paymentUrl || s.paymentId) ?? null} />
                     </td>
                     <td className="px-6 py-5">
-                       <p className="text-xs font-bold text-slate-700">{new Date(s.submittedAt).toLocaleDateString()}</p>
-                       <p className="text-[10px] font-medium text-slate-400">{new Date(s.submittedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p className="text-xs font-bold text-slate-700">{fmtDate(s.submittedAt)}</p>
+                        <p className="text-[10px] font-medium text-slate-400">{fmtTime(s.submittedAt)}</p>
                     </td>
                     <td className="px-6 py-5 text-right">
                        <Button 

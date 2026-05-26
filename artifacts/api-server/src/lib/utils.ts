@@ -82,3 +82,41 @@ export function formatDOBToStandard(dob: string | null | undefined): string {
   return s;
 }
 
+export function formatToDDMMYYYY(date: Date | string | null | undefined): string {
+  if (!date) return "N/A";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "N/A";
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const day = String(ist.getUTCDate()).padStart(2, '0');
+  const month = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const year = ist.getUTCFullYear();
+  return `${day}-${month}-${year}`;
+}
+
+export function formatTo12HrTime(date: Date | string | null | undefined): string {
+  if (!date) return "N/A";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "N/A";
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  let hours = ist.getUTCHours();
+  const minutes = String(ist.getUTCMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+}
+
+export function formatToLocalDateTime(date: Date | string | null | undefined): string {
+  if (!date) return "N/A";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "N/A";
+  const ist = new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
+  const day = String(ist.getUTCDate()).padStart(2, '0');
+  const month = String(ist.getUTCMonth() + 1).padStart(2, '0');
+  const year = ist.getUTCFullYear();
+  let hours = ist.getUTCHours();
+  const minutes = String(ist.getUTCMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12 || 12;
+  return `${day}-${month}-${year} ${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+}
+

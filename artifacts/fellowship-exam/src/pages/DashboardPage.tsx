@@ -1,80 +1,77 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { Users, BookOpen, Award, ClipboardList, Clock, Building2, Database, Loader2, MonitorPlay, KeyRound, RefreshCw, Eye, EyeOff, ChevronRight, TrendingUp, ShieldCheck } from "lucide-react";
+import {
+  Users, BookOpen, Award, ClipboardList, Clock, Loader2,
+  MonitorPlay, KeyRound, RefreshCw, Eye, EyeOff,
+  ChevronRight, ShieldCheck, Activity, EyeIcon,
+  Sparkles, TrendingUp, BarChart3, Zap, Target, Globe2
+} from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+  DialogFooter, DialogDescription
+} from "../components/ui/dialog";
 import { Input } from "../components/ui/input";
+import { fmtDate } from "../lib/dateUtils";
 
-interface DashboardStats {
-  candidates: number;
-  programs: number;
-  units: number;
-  activeExams: number;
-  allocated: number;
-  pendingReview: number;
-}
-
-function StatCard({
-  title, value, icon: Icon, color, href, description, trend
-}: {
-  title: string; value: number | string; icon: React.ElementType; color: string; href?: string; description?: string; trend?: string;
-}) {
-  const [, navigate] = useLocation();
-  return (
-    <div 
-      onClick={() => href && navigate(href)}
-      className={`group relative overflow-hidden rounded-[32px] p-8 transition-all duration-500 ${href ? 'cursor-pointer hover:scale-[1.02] active:scale-95' : ''} bg-white border border-slate-100 shadow-premium hover:shadow-2xl`}
-    >
-      <div className={`absolute top-0 right-0 w-32 h-32 -mr-8 -mt-8 rounded-full opacity-[0.03] transition-transform duration-700 group-hover:scale-150 ${color.replace('bg-', 'bg-')}`} />
-      
-      <div className="relative z-10 flex flex-col h-full justify-between gap-6">
-        <div className="flex justify-between items-start">
-          <div className={`p-4 rounded-2xl ${color} shadow-lg shadow-current/20 group-hover:rotate-6 transition-transform duration-500`}>
-            <Icon className="h-6 w-6 text-white" />
-          </div>
-          {trend && (
-            <Badge className="bg-emerald-50 text-emerald-600 border-emerald-100 font-black text-[10px] h-6 px-3">
-              {trend}
-            </Badge>
-          )}
-        </div>
-        
-        <div>
-          <h3 className="text-4xl font-black text-slate-900 tracking-tighter mb-1">{value}</h3>
-          <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
-          {description && (
-            <p className="text-[10px] font-bold text-slate-400 mt-2 italic">{description}</p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+interface DashboardSummaryData {
+  overall: {
+    totalApplications: number;
+    totalApplicants: number;
+    totalApplicationsTillDate: number;
+    currentDate: string;
+  };
+  segmentWise: {
+    retina: {
+      totalApplications: number;
+      totalApplicants: number;
+      vitreoRetinaCount: number;
+      medicalRetinaCount: number;
+    };
+    anterior: {
+      totalApplications: number;
+      totalApplicants: number;
+      corneaCount: number;
+      cataractCount: number;
+      glaucomaCount: number;
+      pediatricCount: number;
+      orbitCount: number;
+    };
+  };
+  today: {
+    overall: { totalApplications: number; totalApplicants: number; };
+    segmentWise: { retina: number; anterior: number; };
+    specializationWise: {
+      vitreoRetina: number; medicalRetina: number; cornea: number;
+      cataract: number; glaucoma: number; pediatric: number; orbit: number;
+    };
+  };
 }
 
 const statusColors: Record<string, string> = {
-  pending: "bg-yellow-100 text-yellow-800",
-  approved: "bg-green-100 text-green-800",
-  rejected: "bg-red-100 text-red-800",
-  interview_completed: "bg-blue-100 text-blue-800",
-  waitlisted: "bg-purple-100 text-purple-800",
-  allocated: "bg-emerald-100 text-emerald-800",
+  pending: "bg-amber-100 text-amber-700 border-amber-200",
+  approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  rejected: "bg-rose-100 text-rose-700 border-rose-200",
+  interview_completed: "bg-sky-100 text-sky-700 border-sky-200",
+  waitlisted: "bg-violet-100 text-violet-700 border-violet-200",
+  allocated: "bg-teal-100 text-teal-700 border-teal-200",
 };
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const qc = useQueryClient();
   const role = user?.role ?? "";
+  const [, navigate] = useLocation();
 
-  const { data: stats } = useQuery<DashboardStats>({
-    queryKey: ["dashboard"],
-    queryFn: () => api.get<DashboardStats>("/dashboard/summary"),
+  const { data: summary, refetch: refetchSummary, isFetching } = useQuery<DashboardSummaryData>({
+    queryKey: ["dashboard-summary"],
+    queryFn: () => api.get<DashboardSummaryData>("/dashboard/summary"),
+    refetchInterval: 120000,
     retry: false,
   });
 
@@ -85,24 +82,20 @@ export default function DashboardPage() {
 
   const loadTvCode = async () => {
     try {
-      const res = await api.get<{code: string}>("/tv-access/code");
+      const res = await api.get<{ code: string }>("/tv-access/code");
       setTvCode(res.code);
-    } catch (e) {
-      console.error("Failed to load TV access code", e);
-    }
+    } catch (e) { console.error("Failed to load TV access code", e); }
   };
 
   const generateTvCode = async () => {
     setGeneratingTv(true);
     try {
-      const res = await api.post<{code: string}>("/tv-access/code/generate", {});
+      const res = await api.post<{ code: string }>("/tv-access/code/generate", {});
       setTvCode(res.code);
       toast({ title: "New TV Access Code generated successfully" });
-    } catch (e) {
+    } catch {
       toast({ title: "Failed to generate code", variant: "destructive" });
-    } finally {
-      setGeneratingTv(false);
-    }
+    } finally { setGeneratingTv(false); }
   };
 
   const { data: candidates } = useQuery({
@@ -112,80 +105,103 @@ export default function DashboardPage() {
     retry: false,
   });
 
+  // ── Student view ──────────────────────────────────────────────────────────
   if (role === "student") {
     return (
-      <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">Welcome, {user?.fullName}</h1>
-          <p className="text-muted-foreground mt-1">Fellowship Candidate Portal</p>
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-amber-50 p-8">
+        {/* Header */}
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-orange-500 via-orange-600 to-amber-500 p-8 text-white shadow-2xl mb-8">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl" />
+          <div className="relative z-10">
+            <p className="text-orange-100 text-sm font-bold uppercase tracking-widest mb-1">Candidate Portal</p>
+            <h1 className="text-3xl font-black tracking-tight">Welcome, {user?.fullName}</h1>
+            <p className="text-orange-100 text-sm mt-1">Fellowship Admission Dashboard</p>
+          </div>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard title="Assigned Exams" value="—" icon={BookOpen} color="bg-orange-500" href="/exams" />
-          <StatCard title="Completed Exams" value="—" icon={ClipboardList} color="bg-blue-600" href="/results" />
-          <StatCard title="Allocation Status" value="Pending" icon={Award} color="bg-emerald-600" />
+        <div className="grid gap-5 md:grid-cols-3">
+          {[
+            { icon: <BookOpen className="h-5 w-5" />, label: "Assigned Test", sub: "Access scheduled MCQ exams & psychometry", color: "amber", path: "/exams" },
+            { icon: <ClipboardList className="h-5 w-5" />, label: "My Scores", sub: "Track finished attempt metrics and grades", color: "sky", path: "/results" },
+            { icon: <Award className="h-5 w-5" />, label: "Allocation Status", sub: "Awaiting interview completions", color: "teal", path: null },
+          ].map(({ icon, label, sub, color, path }) => (
+            <div
+              key={label}
+              onClick={() => path && navigate(path)}
+              className={`bg-white border border-${color}-100 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all cursor-pointer hover:-translate-y-1`}
+            >
+              <div className={`w-11 h-11 rounded-xl bg-${color}-50 text-${color}-600 flex items-center justify-center mb-4 border border-${color}-100`}>{icon}</div>
+              <h4 className="text-xl font-black text-slate-900">{label}</h4>
+              <p className="text-sm text-slate-500 mt-1">{sub}</p>
+            </div>
+          ))}
         </div>
-        <Card>
-          <CardHeader><CardTitle className="text-base">Getting Started</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm text-muted-foreground">
-            <p>1. Complete your candidate profile under <strong>My Profile</strong></p>
-            <p>2. Take assigned entrance exams under <strong>Exams</strong></p>
-            <p>3. Check your results under <strong>My Results</strong></p>
-          </CardContent>
-        </Card>
       </div>
     );
   }
 
-  const canSeeCandidates = ["super_admin","program_admin","central_exam_coordinator","unit_coordinator"].includes(role);
-  const canSeeExams      = ["super_admin","program_admin","central_exam_coordinator"].includes(role);
-  const canSeeAllocations= ["super_admin","program_admin"].includes(role);
-  const canSeePrograms   = ["super_admin","program_admin"].includes(role);
-
-  const gridCards = [
-    { title: "Active Candidates", value: stats?.candidates ?? "0", icon: Users, color: "bg-indigo-600", href: canSeeCandidates ? "/candidates" : undefined, description: "Total registered in system", trend: "+12%" },
-    { title: "Live Examinations", value: stats?.activeExams ?? "0", icon: BookOpen, color: "bg-amber-500", href: canSeeExams ? "/exams" : undefined, description: "Exams currently in progress", trend: "Active" },
-    { title: "Clinical Programs", value: stats?.programs ?? "0", icon: ClipboardList, color: "bg-rose-600", href: canSeePrograms ? "/programs" : undefined, description: "Specialized fellowship tracks" },
-    { title: "Allocated Fellows", value: stats?.allocated ?? "0", icon: Award, color: "bg-emerald-600", href: canSeeAllocations ? "/allocations" : undefined, description: "Successfully assigned units", trend: "98% Fill" },
-    { title: "Institutional Units", value: stats?.units ?? "0", icon: Building2, color: "bg-slate-900", href: undefined, description: "Sankara hospital network" },
-    { title: "Pending Evaluation", value: stats?.pendingReview ?? "0", icon: Clock, color: "bg-blue-600", href: canSeeCandidates ? "/candidates" : undefined, description: "Awaiting coordinator review", trend: "Priority" },
-  ];
+  const canSeeCandidates = ["super_admin", "program_admin", "central_exam_coordinator", "unit_coordinator"].includes(role);
+  const totalApps = summary?.overall?.totalApplications ?? 0;
+  const totalApplicants = summary?.overall?.totalApplicants ?? 0;
+  const todayApps = summary?.today?.overall?.totalApplications ?? 0;
+  const retinaTotal = summary?.segmentWise?.retina?.totalApplications ?? 0;
+  const anteriorTotal = summary?.segmentWise?.anterior?.totalApplications ?? 0;
 
   return (
-    <div className="p-10 space-y-12 bg-transparent min-h-screen relative z-10">
-      <div className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950 p-10 text-white shadow-xl border border-slate-800/80">
-        <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-indigo-500/10 to-transparent pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
-        
-        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
-          <div className="space-y-3.5 text-left">
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-amber-50/60 p-8 space-y-8">
+
+      {/* ── HERO HEADER ─────────────────────────────────────────────────── */}
+      <div className="relative overflow-hidden rounded-[40px] shadow-2xl">
+        {/* Background gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-orange-500 via-orange-600 to-amber-500" />
+        {/* Decorative orbs */}
+        <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl" />
+        <div className="absolute bottom-0 left-0 w-64 h-64 bg-amber-400/20 rounded-full -ml-16 -mb-16 blur-2xl" />
+        {/* Animated grid */}
+        <div className="absolute inset-0 opacity-10" style={{
+          backgroundImage: 'linear-gradient(rgba(255,255,255,.15) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.15) 1px, transparent 1px)',
+          backgroundSize: '40px 40px'
+        }} />
+
+        <div className="relative z-10 p-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+          <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
-              <Badge className="bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-medium text-[10px] tracking-wider h-6 px-3 rounded-full">
-                INSTITUTIONAL COMMAND CENTER
-              </Badge>
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Secure Node
+              <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md rounded-full px-4 py-1.5 border border-white/30">
+                <ShieldCheck className="h-3.5 w-3.5 text-white" />
+                <span className="text-[10px] font-bold text-white uppercase tracking-widest">Secure Coordinator Terminal</span>
+              </div>
+              <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md rounded-full px-4 py-1.5 border border-white/30">
+                <Clock className="h-3.5 w-3.5 text-amber-200 animate-spin" style={{ animationDuration: '8s' }} />
+                <span className="text-[10px] font-bold text-white uppercase tracking-widest">
+                  {summary?.overall?.currentDate ? fmtDate(summary.overall.currentDate) : "Loading..."}
+                </span>
               </div>
             </div>
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight pt-1">
-              Welcome back, <span className="bg-gradient-to-r from-indigo-200 via-blue-100 to-white bg-clip-text text-transparent">{user?.fullName}</span>
+            <h1 className="text-4xl md:text-5xl font-black tracking-tight text-white leading-tight">
+              Welcome back,{" "}
+              <span className="text-amber-200">{user?.fullName}</span>
             </h1>
-            <p className="text-slate-400 text-sm max-w-xl leading-relaxed font-normal">
-              {role === "unit_coordinator" ? `Managing Hospital Unit Protocols` : "Orchestrating the Sankara Academy of Vision Fellowship Lifecycle with real-time merit data and specialized analytics."}
+            <p className="text-orange-100 text-sm max-w-xl leading-relaxed">
+              Sankara Academy of Vision — Fellowship Examination Command Center. Real-time tracking, automated evaluations & merit ranking.
             </p>
           </div>
-          
-          <div className="flex flex-col sm:flex-row items-center gap-4">
+
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetchSummary()}
+              disabled={isFetching}
+              className="h-11 px-5 rounded-xl bg-white/20 border-white/30 text-white hover:bg-white/30 backdrop-blur-md font-bold text-xs uppercase tracking-wider gap-2"
+            >
+              {isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Sync Live Stats
+            </Button>
             {(role === "super_admin" || role === "program_admin") && (
               <Button
-                variant="outline"
-                className="h-12 px-6 rounded-2xl bg-white/5 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 text-slate-200 font-semibold text-xs tracking-wider uppercase gap-2.5 backdrop-blur-md transition-all shadow-lg"
-                onClick={() => {
-                  setTvCodeOpen(true);
-                  setShowTvCode(false);
-                  loadTvCode();
-                }}
+                onClick={() => { setTvCodeOpen(true); setShowTvCode(false); loadTvCode(); }}
+                className="h-11 px-5 rounded-xl bg-white text-orange-600 hover:bg-orange-50 font-bold text-xs uppercase tracking-wider gap-2 shadow-lg"
               >
-                <MonitorPlay className="h-4.5 w-4.5 text-indigo-400" />
+                <MonitorPlay className="h-4 w-4" />
                 Live TV Access
               </Button>
             )}
@@ -193,132 +209,372 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-        {gridCards.map((c) => (
-          <StatCard key={c.title} title={c.title} value={c.value} icon={c.icon} color={c.color} href={c.href} description={c.description} trend={c.trend} />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-10">
-        {candidates && candidates.length > 0 && (
-          <div className="xl:col-span-8 space-y-6">
-             <div className="flex justify-between items-center px-4">
-                <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter italic">Candidate Intelligence Feed</h3>
-                <Button variant="ghost" className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-primary transition-colors">View Unified Registry</Button>
-             </div>
-             <Card className="rounded-[40px] border-none shadow-premium overflow-hidden bg-white">
-                <CardContent className="p-0">
-                  <div className="divide-y divide-slate-50">
-                    {candidates.slice(0, 6).map((c) => (
-                      <div key={c.id} className="group flex items-center justify-between p-8 hover:bg-slate-50 transition-all duration-300">
-                        <div className="flex items-center gap-6">
-                           <div className="h-14 w-14 rounded-2xl bg-slate-100 flex items-center justify-center font-black text-slate-900 text-lg shadow-sm group-hover:bg-primary group-hover:text-white transition-all">
-                              {c.fullName.charAt(0)}
-                           </div>
-                           <div>
-                              <p className="text-lg font-black text-slate-800 uppercase tracking-tight leading-none mb-1.5">{c.fullName}</p>
-                              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] font-mono">{c.candidateCode}</p>
-                           </div>
-                        </div>
-                        <div className="flex items-center gap-8">
-                           <div className="hidden md:flex flex-col items-end">
-                              <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest mb-1">Status Registry</p>
-                              <Badge className={`rounded-full px-5 h-8 font-black uppercase text-[10px] tracking-widest shadow-sm border ${statusColors[c.status] ?? "bg-slate-100 text-slate-800"}`} variant="secondary">
-                                {c.status.replace(/_/g, " ")}
-                              </Badge>
-                           </div>
-                           <Button variant="outline" size="icon" className="h-12 w-12 rounded-2xl border-slate-100 hover:bg-slate-900 hover:text-white transition-all shadow-sm">
-                              <ChevronRight className="h-5 w-5" />
-                           </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-             </Card>
+      {/* ── TODAY PULSE BAR ─────────────────────────────────────────────── */}
+      <div className="bg-white rounded-[28px] shadow-lg border border-orange-100 p-6 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative">
+        <div className="absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-orange-500 to-amber-400 rounded-l-[28px]" />
+        <div className="flex items-center gap-4 ml-4">
+          <div className="relative">
+            <span className="absolute inline-flex h-4 w-4 rounded-full bg-orange-400 opacity-70 animate-ping" />
+            <span className="relative inline-flex rounded-full h-4 w-4 bg-orange-500" />
           </div>
-        )}
-
-        <div className="xl:col-span-4 space-y-6">
-           <h3 className="text-xl font-black text-slate-900 uppercase tracking-tighter italic px-4">System Health</h3>
-           <Card className="rounded-[40px] border-none shadow-premium bg-gradient-to-br from-indigo-600 to-primary p-10 text-white relative overflow-hidden">
-              <div className="relative z-10 space-y-8">
-                 <div className="space-y-2">
-                    <p className="text-[11px] font-black text-white/60 uppercase tracking-[0.3em]">Institutional Capacity</p>
-                    <h4 className="text-4xl font-black tracking-tighter">84% Operational</h4>
-                 </div>
-                 <div className="space-y-4">
-                    <div className="h-3 w-full bg-white/10 rounded-full overflow-hidden">
-                       <div className="h-full w-[84%] bg-amber-400 rounded-full shadow-[0_0_20px_rgba(251,191,36,0.5)]" />
-                    </div>
-                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest">
-                       <span>Interview Throughput</span>
-                       <span className="text-amber-400">High Efficiency</span>
-                    </div>
-                 </div>
-                 <Button 
-                   onClick={async () => {
-                     try {
-                       const blob = await api.getBlob("/reports/cycle-report");
-                       const url = window.URL.createObjectURL(blob);
-                       const link = document.createElement("a");
-                       link.href = url;
-                       link.setAttribute("download", `Full_Cycle_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
-                       document.body.appendChild(link);
-                       link.click();
-                       link.remove();
-                       window.URL.revokeObjectURL(url);
-                     } catch (error) {
-                       toast({ title: "Download Failed", description: "Could not generate cycle report", variant: "destructive" });
-                     }
-                   }}
-                   className="w-full h-14 rounded-2xl bg-white text-slate-900 font-black uppercase tracking-widest text-[11px] hover:bg-slate-50 shadow-2xl"
-                 >
-                    Download Cycle Report
-                 </Button>
-              </div>
-              <div className="absolute -bottom-10 -right-10 w-48 h-48 bg-white/5 rounded-full blur-3xl" />
-           </Card>
+          <div>
+            <div className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Today's Live Performance</div>
+            <h4 className="text-base font-black text-slate-900">Real-time stats — auto-refreshing every 2 min</h4>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 md:gap-10 w-full md:w-auto">
+          {[
+            { val: todayApps, label: "Today's Apps", color: "text-orange-600" },
+            { val: summary?.today?.segmentWise?.retina ?? 0, label: "Retina Today", color: "text-violet-600" },
+            { val: summary?.today?.segmentWise?.anterior ?? 0, label: "Anterior Today", color: "text-emerald-600" },
+            { val: summary?.today?.overall?.totalApplicants ?? 0, label: "Today's Students", color: "text-amber-600" },
+          ].map(({ val, label, color }) => (
+            <div key={label} className="text-center">
+              <div className={`text-2xl font-black ${color}`}>{val}</div>
+              <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">{label}</div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* TV Access Code Dialog */}
+      {/* ── MAIN STATS CARDS ────────────────────────────────────────────── */}
+      <div className="grid gap-5 sm:grid-cols-3">
+        {[
+          {
+            icon: <Users className="h-6 w-6" />,
+            value: totalApplicants,
+            label: "Unique Applicants",
+            sublabel: "Registered candidates",
+            badge: "Merit Cohort",
+            gradient: "from-orange-500 to-amber-400",
+            bg: "bg-orange-50",
+            text: "text-orange-600",
+            border: "border-orange-100",
+          },
+          {
+            icon: <ClipboardList className="h-6 w-6" />,
+            value: totalApps,
+            label: "Total Applications",
+            sublabel: "Across all specializations",
+            badge: "All Nodes",
+            gradient: "from-violet-500 to-purple-400",
+            bg: "bg-violet-50",
+            text: "text-violet-600",
+            border: "border-violet-100",
+          },
+          {
+            icon: <Activity className="h-6 w-6" />,
+            value: "8",
+            label: "Specializations",
+            sublabel: "Active program streams",
+            badge: "Live",
+            gradient: "from-emerald-500 to-teal-400",
+            bg: "bg-emerald-50",
+            text: "text-emerald-600",
+            border: "border-emerald-100",
+          },
+        ].map(({ icon, value, label, sublabel, badge, gradient, bg, text, border }) => (
+          <div key={label} className={`bg-white rounded-3xl p-7 shadow-lg border ${border} hover:shadow-xl transition-all hover:-translate-y-0.5 group overflow-hidden relative`}>
+            <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${gradient} opacity-5 rounded-full -mr-10 -mt-10 blur-xl`} />
+            <div className="flex items-start justify-between mb-5">
+              <div className={`w-12 h-12 rounded-2xl ${bg} ${text} flex items-center justify-center border ${border} shadow-sm`}>
+                {icon}
+              </div>
+              <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 ${bg} ${text} rounded-full border ${border}`}>
+                {badge}
+              </span>
+            </div>
+            <div>
+              <div className={`text-4xl font-black ${text} tracking-tight`}>{value}</div>
+              <p className="text-sm font-bold text-slate-900 mt-1">{label}</p>
+              <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider mt-0.5">{sublabel}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── SEGMENT CARDS ───────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* RETINA SEGMENT */}
+        <div className="bg-white rounded-3xl shadow-lg border border-violet-100 overflow-hidden">
+          {/* Top gradient band */}
+          <div className="h-2 bg-gradient-to-r from-violet-500 to-indigo-500" />
+          <div className="p-8">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-violet-50 text-violet-600 flex items-center justify-center border border-violet-100">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight">RETINA SEGMENT</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Vitreoretinal & Medical Retina</p>
+                </div>
+              </div>
+              <span className="text-xl font-black text-violet-600 bg-violet-50 rounded-2xl px-4 py-2 border border-violet-100">
+                {retinaTotal}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {[
+                { name: "Vitreoretinal Surgery", val: summary?.segmentWise?.retina?.vitreoRetinaCount ?? 0, color: "bg-violet-500", bgLight: "bg-violet-50", textCol: "text-violet-700", max: Math.max(retinaTotal, 1) },
+                { name: "Medical Retina", val: summary?.segmentWise?.retina?.medicalRetinaCount ?? 0, color: "bg-indigo-500", bgLight: "bg-indigo-50", textCol: "text-indigo-700", max: Math.max(retinaTotal, 1) },
+              ].map(({ name, val, color, bgLight, textCol, max }) => (
+                <div key={name} className={`${bgLight} rounded-2xl p-4 border border-slate-100`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold text-slate-700">{name}</span>
+                    <span className={`text-sm font-black ${textCol}`}>{val}</span>
+                  </div>
+                  <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full ${color} rounded-full transition-all duration-700`}
+                      style={{ width: `${Math.max(5, (val / max) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 pt-4 border-t border-slate-100 flex justify-between text-xs text-slate-400 font-medium">
+              <span>Unique candidates</span>
+              <span className="font-bold text-slate-700">{summary?.segmentWise?.retina?.totalApplicants ?? 0}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ANTERIOR SEGMENT */}
+        <div className="bg-white rounded-3xl shadow-lg border border-emerald-100 overflow-hidden">
+          <div className="h-2 bg-gradient-to-r from-emerald-500 to-teal-500" />
+          <div className="p-8">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                  <Target className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight">ANTERIOR SEGMENT</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cornea, IOL, Glaucoma, Pediatric, Orbit</p>
+                </div>
+              </div>
+              <span className="text-xl font-black text-emerald-600 bg-emerald-50 rounded-2xl px-4 py-2 border border-emerald-100">
+                {anteriorTotal}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { name: "Cornea", val: summary?.segmentWise?.anterior?.corneaCount ?? 0, color: "text-sky-600", bg: "bg-sky-50 border-sky-100", bar: "bg-sky-500" },
+                { name: "IOL / Cataract / Phaco", val: summary?.segmentWise?.anterior?.cataractCount ?? 0, color: "text-teal-600", bg: "bg-teal-50 border-teal-100", bar: "bg-teal-500" },
+                { name: "Glaucoma", val: summary?.segmentWise?.anterior?.glaucomaCount ?? 0, color: "text-emerald-600", bg: "bg-emerald-50 border-emerald-100", bar: "bg-emerald-500" },
+                { name: "Pediatric Ophthalmology", val: summary?.segmentWise?.anterior?.pediatricCount ?? 0, color: "text-amber-600", bg: "bg-amber-50 border-amber-100", bar: "bg-amber-500" },
+              ].map(({ name, val, color, bg, bar }) => (
+                <div key={name} className={`${bg} border rounded-xl p-3.5`}>
+                  <div className={`text-lg font-black ${color}`}>{val}</div>
+                  <div className="text-[10px] text-slate-600 font-bold mt-0.5 leading-tight">{name}</div>
+                  <div className="h-1 bg-white/80 rounded-full mt-2 overflow-hidden">
+                    <div className={`h-full ${bar} rounded-full`} style={{ width: `${Math.max(8, (val / Math.max(anteriorTotal, 1)) * 100)}%` }} />
+                  </div>
+                </div>
+              ))}
+              <div className="col-span-2 bg-rose-50 border border-rose-100 rounded-xl p-3.5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700">Oculoplasty / Orbit</span>
+                <span className="text-lg font-black text-rose-600">{summary?.segmentWise?.anterior?.orbitCount ?? 0}</span>
+              </div>
+            </div>
+            <div className="mt-5 pt-4 border-t border-slate-100 flex justify-between text-xs text-slate-400 font-medium">
+              <span>Unique candidates</span>
+              <span className="font-bold text-slate-700">{summary?.segmentWise?.anterior?.totalApplicants ?? 0}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── CANDIDATE FEED + EXPORT ──────────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+
+        {/* Candidate Feed */}
+        {candidates && candidates.length > 0 && (
+          <div className="xl:col-span-8 bg-white rounded-3xl shadow-lg border border-slate-100 overflow-hidden">
+            <div className="px-8 py-5 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100">
+                  <Zap className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Live Candidate Feed</h3>
+                  <p className="text-[10px] text-slate-400 font-medium">Latest enrolled candidates</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate("/candidates")}
+                className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 text-[10px] font-black uppercase tracking-widest rounded-xl gap-1"
+              >
+                View All <ChevronRight className="h-3 w-3" />
+              </Button>
+            </div>
+            <div className="divide-y divide-slate-50">
+              {candidates.slice(0, 6).map((c, i) => (
+                <div
+                  key={c.id}
+                  className="group flex items-center justify-between px-8 py-4 hover:bg-orange-50/50 transition-all cursor-pointer"
+                  onClick={() => navigate("/candidates")}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`h-11 w-11 rounded-2xl flex items-center justify-center font-black text-base shadow-sm transition-all group-hover:scale-105 ${
+                      i % 4 === 0 ? 'bg-orange-100 text-orange-700' :
+                      i % 4 === 1 ? 'bg-violet-100 text-violet-700' :
+                      i % 4 === 2 ? 'bg-emerald-100 text-emerald-700' :
+                      'bg-amber-100 text-amber-700'
+                    }`}>
+                      {c.fullName.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-slate-900 group-hover:text-orange-600 transition-colors">{c.fullName}</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-mono">{c.candidateCode}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <Badge className={`rounded-full px-3 h-6 font-bold uppercase text-[9px] tracking-wider border ${statusColors[c.status] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                      {(c.status || "pending").replace(/_/g, " ")}
+                    </Badge>
+                    <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-orange-500 transition-colors" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {candidates.length > 6 && (
+              <div className="px-8 py-4 border-t border-slate-100 text-center">
+                <Button variant="ghost" size="sm" onClick={() => navigate("/candidates")} className="text-orange-600 hover:bg-orange-50 font-bold text-xs">
+                  +{candidates.length - 6} more candidates →
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Export / Cycle Panel */}
+        <div className="xl:col-span-4 space-y-4">
+          {/* Export Card */}
+          <div className="relative overflow-hidden rounded-3xl shadow-xl" style={{ background: 'linear-gradient(135deg, #ea580c 0%, #f97316 40%, #f59e0b 100%)' }}>
+            <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl" />
+            <div className="relative z-10 p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                  <BarChart3 className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-orange-100 uppercase tracking-[0.25em]">Merit Appraisal Engine</p>
+                  <h4 className="text-xl font-black text-white tracking-tight">Analytics Export</h4>
+                </div>
+              </div>
+              <p className="text-xs text-orange-100 leading-relaxed mb-6">
+                Download Excel spreadsheets with comprehensive statistics, bar charts, and specialization breakdowns.
+              </p>
+              <div className="mb-4">
+                <div className="flex justify-between text-[9px] font-bold text-white/70 uppercase tracking-widest mb-1.5">
+                  <span>Data Completeness</span>
+                  <span>{Math.min(100, Math.round((totalApps / Math.max(totalApplicants, 1)) * 40 + 60))}%</span>
+                </div>
+                <div className="h-2 bg-white/20 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white rounded-full shadow-sm transition-all duration-700"
+                    style={{ width: `${Math.min(100, Math.round((totalApps / Math.max(totalApplicants, 1)) * 40 + 60))}%` }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    const blob = await api.getBlob("/reports/cycle-report");
+                    const url = window.URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.setAttribute("download", `SAV_Cycle_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(url);
+                    toast({ title: "Cycle Report Downloaded", description: "Successfully downloaded SAV_Cycle_Report.xlsx" });
+                  } catch {
+                    toast({ title: "Download Failed", description: "Could not generate cycle report", variant: "destructive" });
+                  }
+                }}
+                className="w-full h-12 bg-white text-orange-600 font-black text-sm uppercase tracking-widest rounded-xl hover:bg-orange-50 transition-all shadow-lg flex items-center justify-center gap-2 hover:-translate-y-0.5 active:translate-y-0"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Export Cycle Report
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Navigation */}
+          <div className="bg-white rounded-3xl shadow-lg border border-slate-100 p-6">
+            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Globe2 className="h-3 w-3" /> Quick Navigation
+            </h4>
+            <div className="space-y-2">
+              {[
+                { label: "Candidate Registry", icon: <Users className="h-4 w-4" />, path: "/candidates", color: "orange" },
+                { label: "Interview Panels", icon: <ClipboardList className="h-4 w-4" />, path: "/interviews", color: "violet" },
+                { label: "Merit Results", icon: <TrendingUp className="h-4 w-4" />, path: "/results", color: "emerald" },
+                { label: "Application Forms", icon: <BookOpen className="h-4 w-4" />, path: "/application-forms", color: "amber" },
+              ].map(({ label, icon, path, color }) => (
+                <button
+                  key={path}
+                  onClick={() => navigate(path)}
+                  className={`w-full flex items-center justify-between p-3 rounded-xl bg-${color}-50 hover:bg-${color}-100 border border-${color}-100 transition-all group`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`text-${color}-600`}>{icon}</div>
+                    <span className={`text-sm font-bold text-${color}-700`}>{label}</span>
+                  </div>
+                  <ChevronRight className={`h-4 w-4 text-${color}-400 group-hover:translate-x-0.5 transition-transform`} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── TV Access Code Dialog ───────────────────────────────────────── */}
       <Dialog open={tvCodeOpen} onOpenChange={setTvCodeOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md bg-white border border-slate-200 rounded-3xl shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <KeyRound className="h-5 w-5 text-emerald-500" />
-              Waiting Hall TV Access
+            <DialogTitle className="flex items-center gap-2 text-slate-900 text-xl font-black">
+              <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center">
+                <KeyRound className="h-4 w-4" />
+              </div>
+              Live TV Portal Access
             </DialogTitle>
-            <DialogDescription>
-              Use this secure code to authorize public screens accessing the TV portal.
+            <DialogDescription className="text-slate-500 text-sm">
+              Use this code to pair public queue screens to the dashboard stream safely.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col items-center justify-center py-6 space-y-4">
+          <div className="flex flex-col items-center py-6 space-y-4">
             <div className="relative">
               <Input
                 readOnly
                 value={showTvCode ? tvCode : "••••••"}
-                className="w-48 h-16 text-center text-3xl font-black tracking-[0.25em] bg-slate-100 dark:bg-slate-900 border-2"
+                className="w-52 h-16 text-center text-3xl font-black tracking-[0.3em] bg-slate-50 border-slate-200 text-slate-900 rounded-2xl focus:ring-orange-500"
               />
               <Button
                 variant="ghost"
                 size="icon"
-                className="absolute right-2 top-3 h-10 w-10 text-muted-foreground hover:text-foreground"
+                className="absolute right-2 top-3 h-10 w-10 text-slate-400 hover:text-orange-600 hover:bg-orange-50 rounded-xl"
                 onClick={() => setShowTvCode(!showTvCode)}
               >
-                {showTvCode ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showTvCode ? <EyeOff className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground text-center max-w-xs">
-              Anyone with this code can access the live interview dashboard until a new code is generated.
+            <p className="text-[10px] text-slate-400 text-center max-w-xs leading-relaxed uppercase tracking-wider font-bold">
+              Pairs live wait screens for candidate queue displays
             </p>
           </div>
-          <DialogFooter className="sm:justify-between">
-            <Button variant="ghost" onClick={() => setTvCodeOpen(false)}>Close</Button>
-            <Button variant="default" onClick={generateTvCode} disabled={generatingTv} className="gap-2">
+          <DialogFooter className="sm:justify-between border-t border-slate-100 pt-4">
+            <Button variant="ghost" onClick={() => setTvCodeOpen(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl">Close</Button>
+            <Button onClick={generateTvCode} disabled={generatingTv} className="bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold rounded-xl h-10 px-5 gap-2 shadow-lg">
               {generatingTv ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              Generate New Code
+              Refresh Code
             </Button>
           </DialogFooter>
         </DialogContent>

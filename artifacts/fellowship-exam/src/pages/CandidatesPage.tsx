@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { fmtDate } from "../lib/dateUtils";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useAuth } from "../contexts/AuthContext";
@@ -34,6 +35,14 @@ interface Candidate {
   centerPreference?: string | null;
   submissionId?: number | null;
   pgQualifications?: string | null;
+  applications?: {
+    id: number;
+    specialityId: number;
+    hallTicketNumber: string | null;
+    status: string;
+    batchId: number | null;
+    interviewSlot: string | null;
+  }[];
 }
 
 const statusColors: Record<string, string> = {
@@ -117,7 +126,6 @@ function normalizeSpecs(specs: string[]): string[] {
     return [s];
   }))).filter(Boolean);
 }
-
 function SecureFileLink({ url }: { url: string | null }) {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -253,6 +261,123 @@ function ScoreDialog({ candidate, open, onClose }: { candidate: Candidate | null
   );
 }
 
+function ScheduleBatchDialog({ 
+  candidate, 
+  open, 
+  onClose,
+  batches,
+  specialities
+}: { 
+  candidate: Candidate | null; 
+  open: boolean; 
+  onClose: () => void;
+  batches: any[];
+  specialities: any[];
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [selectedBatches, setSelectedBatches] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    if (candidate && candidate.applications) {
+      const init: Record<number, string> = {};
+      candidate.applications.forEach((app) => {
+        init[app.id] = app.batchId ? String(app.batchId) : "none";
+      });
+      setSelectedBatches(init);
+    } else {
+      setSelectedBatches({});
+    }
+  }, [candidate, open]);
+
+  const scheduleMutation = useMutation({
+    mutationFn: (data: { schedules: { applicationId: number; batchId: number | null }[] }) =>
+      api.post(`/candidates/${candidate!.id}/batches`, data),
+    onSuccess: () => {
+      toast({ title: "Schedules updated", description: "Batch assignments saved successfully." });
+      qc.invalidateQueries({ queryKey: ["candidates"] });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error saving schedules", description: e.message, variant: "destructive" }),
+  });
+
+  const handleSave = () => {
+    if (!candidate) return;
+    const schedules = Object.entries(selectedBatches).map(([appIdStr, batchIdStr]) => ({
+      applicationId: Number(appIdStr),
+      batchId: batchIdStr === "none" ? null : Number(batchIdStr)
+    }));
+    scheduleMutation.mutate({ schedules });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-lg font-bold text-slate-900">
+            <CalendarDays className="h-5 w-5 text-orange-500" /> Schedule Batches — {candidate?.fullName}
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">{candidate?.candidateCode} • {candidate?.email}</p>
+        
+        <div className="space-y-4 my-4">
+          {candidate?.applications && candidate.applications.length > 0 ? (
+            candidate.applications.map((app) => {
+              const spec = specialities.find(s => s.id === app.specialityId);
+              const specName = spec?.name || "Unknown Specialty";
+              return (
+                <div key={app.id} className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-100 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-slate-800 dark:text-slate-200">{specName}</span>
+                    <Badge variant="outline" className="text-[10px] font-semibold text-slate-500 uppercase">
+                      {app.status}
+                    </Badge>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-slate-500">Select Batch</Label>
+                    <Select 
+                      value={selectedBatches[app.id] || "none"} 
+                      onValueChange={(val) => setSelectedBatches(prev => ({ ...prev, [app.id]: val }))}
+                    >
+                      <SelectTrigger className="h-10 text-sm font-medium bg-white dark:bg-black rounded-lg border-slate-200">
+                        <SelectValue placeholder="— Unassigned —" />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-xl">
+                        <SelectItem value="none">— Unassigned —</SelectItem>
+                        {batches.map((b) => (
+                          <SelectItem key={b.id} value={String(b.id)}>
+                            {b.name} ({fmtDate(b.date)} - {b.timing})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <p className="text-sm text-muted-foreground italic text-center py-4 bg-slate-50 rounded-xl">
+              No approved applications found to schedule.
+            </p>
+          )}
+        </div>
+        
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} className="rounded-lg">Cancel</Button>
+          <Button 
+            disabled={scheduleMutation.isPending} 
+            onClick={handleSave}
+            className="bg-[#0b4a8f] text-white hover:bg-[#08386b] rounded-lg"
+          >
+            {scheduleMutation.isPending ? "Saving…" : "Save Assignments"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function CandidatesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -266,6 +391,7 @@ export default function CandidatesPage() {
   const [viewCandidate, setViewCandidate] = useState<Candidate | null>(null);
   const [docsCandidate, setDocsCandidate] = useState<Candidate | null>(null);
   const [scoreCandidate, setScoreCandidate] = useState<Candidate | null>(null);
+  const [scheduleCandidate, setScheduleCandidate] = useState<Candidate | null>(null);
   const [importLoading, setImportLoading] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importProgramId, setImportProgramId] = useState("");
@@ -304,9 +430,14 @@ export default function CandidatesPage() {
     queryFn: () => api.get("/programs"),
   });
 
-  const { data: specialities = [] } = useQuery<{ id: number; name: string }[]>({
+  const { data: specialities = [] } = useQuery<{ id: number; name: string; code?: string }[]>({
     queryKey: ["specialities"],
     queryFn: () => api.get("/specialities"),
+  });
+
+  const { data: batches = [] } = useQuery<any[]>({
+    queryKey: ["batches"],
+    queryFn: () => api.get("/batches"),
   });
 
   const assignUnitMutation = useMutation({
@@ -482,6 +613,8 @@ export default function CandidatesPage() {
       return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
     } else if (sortBy === "name_asc") {
       return a.fullName.localeCompare(b.fullName);
+    } else if (sortBy === "name_desc") {
+      return b.fullName.localeCompare(a.fullName);
     }
     return 0;
   });
@@ -639,6 +772,35 @@ export default function CandidatesPage() {
         ))}
       </div>
 
+      {/* Premium Segment Filtering Sub-Tabs */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6 mt-4">
+        {[
+          { id: "all", label: "All Candidates", count: candidates.length },
+          { id: "Anterior", label: "Anterior Segment", count: candidates.filter(c => getInterviewInfo(normalizeSpecs(c.specializations))?.category.includes("Anterior")).length },
+          { id: "Retina", label: "Retina Segment", count: candidates.filter(c => getInterviewInfo(normalizeSpecs(c.specializations))?.category.includes("Retina")).length },
+        ].map((tab) => {
+          const isActive = categoryFilter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setCategoryFilter(tab.id)}
+              className={`pb-3 font-semibold text-sm transition-all border-b-2 px-1 relative ${
+                isActive 
+                  ? "border-[#0b4a8f] text-[#0b4a8f] dark:text-blue-400 font-bold" 
+                  : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                {tab.label}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${isActive ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"}`}>
+                  {tab.count}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="bg-white p-1 rounded-xl shadow-sm flex gap-2 flex-wrap border border-slate-200">
         <div className="relative flex-1 min-w-[300px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -658,18 +820,6 @@ export default function CandidatesPage() {
           <SelectContent className="rounded-lg border-slate-200">
             <SelectItem value="all">All Specializations</SelectItem>
             {allSpecs.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-48 h-10 border-none bg-transparent focus:ring-0 font-semibold text-sm text-slate-700">
-            <Building2 className="h-4 w-4 mr-2 text-slate-400" />
-            <SelectValue placeholder="All Categories" />
-          </SelectTrigger>
-          <SelectContent className="rounded-lg border-slate-200">
-            <SelectItem value="all">All Categories</SelectItem>
-            <SelectItem value="Anterior">Anterior Segment</SelectItem>
-            <SelectItem value="Retina">Retina (Posterior)</SelectItem>
           </SelectContent>
         </Select>
         <div className="h-10 w-px bg-slate-200 hidden md:block"></div>
@@ -694,6 +844,7 @@ export default function CandidatesPage() {
             <SelectItem value="date_desc">Applied (Newest)</SelectItem>
             <SelectItem value="date_asc">Applied (Oldest)</SelectItem>
             <SelectItem value="name_asc">Name (A-Z)</SelectItem>
+            <SelectItem value="name_desc">Name (Z-A)</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -760,24 +911,57 @@ export default function CandidatesPage() {
                            </span>
                            {c.createdAt && (
                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1 border-l pl-3 border-slate-100">
-                                <CalendarDays className="w-2.5 h-2.5" /> {new Date(c.createdAt).toLocaleDateString()}
+                                <CalendarDays className="w-2.5 h-2.5" /> {fmtDate(c.createdAt)}
                              </span>
                            )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-5 max-w-[200px]">
+                    <td className="px-6 py-5 max-w-[280px]">
                       {(() => {
-                        const specs = normalizeSpecs(c.specializations);
+                        const apps = c.applications || [];
+                        if (apps.length === 0) {
+                          const specs = normalizeSpecs(c.specializations);
+                          return (
+                            <div className="flex flex-wrap gap-1.5">
+                              {specs.length === 0 ? (
+                                <span className="text-[10px] font-bold text-slate-400 uppercase italic tracking-widest">No Selection</span>
+                              ) : specs.map((s) => (
+                                <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
+                                   {s}
+                                </Badge>
+                              ))}
+                            </div>
+                          );
+                        }
                         return (
-                          <div className="flex flex-wrap gap-1.5">
-                            {specs.length === 0 ? (
-                              <span className="text-[10px] font-bold text-slate-400 uppercase italic tracking-widest">No Selection</span>
-                            ) : specs.map((s) => (
-                              <Badge key={s} className={`${SPEC_COLORS[s] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
-                                 {s}
-                              </Badge>
-                            ))}
+                          <div className="flex flex-col gap-2">
+                            {apps.map((app) => {
+                              const spec = specialities.find(s => s.id === app.specialityId);
+                              const batch = batches.find(b => b.id === app.batchId);
+                              const specName = spec?.name || "Unknown Specialty";
+                              return (
+                                <div key={app.id} className="flex flex-col gap-1 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg border border-slate-100 dark:border-slate-850 shadow-sm">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <Badge className={`${SPEC_COLORS[specName] ?? "bg-slate-100 text-slate-600"} rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-tight border-none shadow-sm`}>
+                                      {specName}
+                                    </Badge>
+                                    <span className="text-[9px] font-mono text-slate-400 uppercase font-semibold">
+                                      {app.status}
+                                    </span>
+                                  </div>
+                                  {batch ? (
+                                    <div className="flex items-center gap-1 text-[10px] font-bold text-[#0b4a8f]">
+                                      <CalendarDays className="h-3 w-3 text-orange-500 shrink-0" />
+                                      <span className="truncate max-w-[120px]" title={batch.name}>{batch.name}</span>
+                                      <span className="text-slate-400 font-normal shrink-0">({fmtDate(batch.date)})</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[9px] text-slate-400 italic">No batch assigned</span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })()}
@@ -849,17 +1033,45 @@ export default function CandidatesPage() {
                               <ClipboardEdit className="h-3.5 w-3.5" /> Marks
                             </Button>
                           )}
-                          {c.submissionId && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 gap-1 text-xs text-orange-600 border-orange-200 hover:bg-orange-50"
-                              onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
-                              title="Print Application Form"
+                          {canManage && c.applications && c.applications.length > 0 && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-7 gap-1 text-xs text-[#0b4a8f] border-blue-250 hover:bg-blue-50 font-bold shadow-sm" 
+                              onClick={() => setScheduleCandidate(c)}
+                              title="Assign batches for candidate specialities"
                             >
-                              <Printer className="h-3.5 w-3.5" /> Print
+                              <CalendarDays className="h-3.5 w-3.5 text-orange-500" /> Schedule
                             </Button>
                           )}
+                          {c.submissionId && (
+                             <Button
+                               variant="outline"
+                               size="sm"
+                               className="h-7 gap-1 text-xs text-orange-600 border-orange-200 hover:bg-orange-50"
+                               onClick={() => window.open(`/api/v2/generate-print/${c.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                               title="Print Application Form"
+                             >
+                               <Printer className="h-3.5 w-3.5" /> Print
+                             </Button>
+                           )}
+                           {c.applications && c.applications.length > 0 && (() => {
+                             const approvedApps = c.applications.filter(app => 
+                               app.status === "approved" || app.status === "verified" || app.status === "scheduled" || app.status === "interviewed" || app.status === "completed"
+                             );
+                             if (approvedApps.length === 0) return null;
+                             return (
+                               <Button
+                                 variant="outline"
+                                 size="sm"
+                                 className="h-7 gap-1 text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50 font-bold uppercase tracking-tight shadow-sm"
+                                 onClick={() => window.open(`/api/candidates/${c.id}/hall-ticket?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                                 title="Download Combined Admit Card"
+                               >
+                                 <Download className="h-3.5 w-3.5" /> Admit Card
+                               </Button>
+                             );
+                           })()}
                           {c.documents.length > 0 && (
                             <Button variant="outline" size="sm" className="h-7 gap-1 text-xs" onClick={() => setDocsCandidate(c)}>
                               <FolderOpen className="h-3.5 w-3.5" /> Docs
@@ -890,6 +1102,15 @@ export default function CandidatesPage() {
 
       {/* Score Entry Dialog */}
       <ScoreDialog candidate={scoreCandidate} open={!!scoreCandidate} onClose={() => setScoreCandidate(null)} />
+
+      {/* Schedule Batch Dialog */}
+      <ScheduleBatchDialog 
+        candidate={scheduleCandidate} 
+        open={!!scheduleCandidate} 
+        onClose={() => setScheduleCandidate(null)} 
+        batches={batches}
+        specialities={specialities}
+      />
 
       {/* Documents Dialog */}
       <Dialog open={!!docsCandidate} onOpenChange={() => setDocsCandidate(null)}>

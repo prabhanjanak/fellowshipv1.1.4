@@ -236,6 +236,11 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
       unitName: unit?.name ?? null,
       status: c.status,
       specializations,
+      preferences: prefs.map((p) => ({
+        id: p.id,
+        specialityId: p.specialityId,
+        preferenceOrder: p.preferenceOrder
+      })),
       documents,
       mcqScore: c.mcqScore ? parseFloat(c.mcqScore) : null,
       psychometricScore: c.psychometricScore ? parseFloat(c.psychometricScore) : null,
@@ -792,15 +797,60 @@ router.post("/candidates", requireAuth, requireRole("super_admin", "program_admi
   res.json({ id: c.id, candidateCode: c.candidateCode, fullName: c.fullName, email: c.email, phone: c.phone, unitId: c.unitId, unitName: null, status: c.status });
 });
 
-// CEC or admin: update MCQ / psychometric scores (+ optionally assign to panel queue)
+// CEC or admin: update MCQ / psychometric / VIVA scores (+ optionally assign to panel queue)
 router.patch("/candidates/:candidateId/marks", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
   const id = Number(req.params["candidateId"]);
-  const { mcqScore, psychometricScore, panelId } = req.body as { mcqScore?: number | null; psychometricScore?: number | null; panelId?: number | null };
+  const { mcqScore, psychometricScore, vivaScore, specialityId, panelId } = req.body as { 
+    mcqScore?: number | null; 
+    psychometricScore?: number | null; 
+    vivaScore?: number | null;
+    specialityId?: number | null;
+    panelId?: number | null 
+  };
+  
   const update: Record<string, unknown> = {};
-  if (mcqScore !== undefined) update["mcqScore"] = mcqScore;
-  if (psychometricScore !== undefined) update["psychometricScore"] = psychometricScore;
+  if (mcqScore !== undefined) update["mcqScore"] = mcqScore !== null ? String(mcqScore) : null;
+  if (psychometricScore !== undefined) update["psychometricScore"] = psychometricScore !== null ? String(psychometricScore) : null;
+  
   const [updated] = await db.update(candidatesTable).set(update).where(eq(candidatesTable.id, id)).returning();
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
+
+  // Update or insert direct VIVA score if provided
+  if (vivaScore !== undefined && vivaScore !== null) {
+    const docId = req.user!.userId;
+    // We map to the selected specialityId or fallback to the candidate's first preference
+    let targetSpecId = specialityId;
+    if (!targetSpecId) {
+      const [firstPref] = await db.select().from(candidatePreferencesTable)
+        .where(eq(candidatePreferencesTable.candidateId, id))
+        .orderBy(candidatePreferencesTable.preferenceOrder);
+      if (firstPref) {
+        targetSpecId = firstPref.specialityId;
+      }
+    }
+
+    if (targetSpecId) {
+      const [existing] = await db.select().from(interviewScoresTable)
+        .where(and(
+          eq(interviewScoresTable.candidateId, id),
+          eq(interviewScoresTable.doctorId, docId),
+          eq(interviewScoresTable.specialityId, targetSpecId)
+        ));
+      if (existing) {
+        await db.update(interviewScoresTable)
+          .set({ score: vivaScore, submittedAt: new Date() })
+          .where(eq(interviewScoresTable.id, existing.id));
+      } else {
+        await db.insert(interviewScoresTable).values({
+          candidateId: id,
+          doctorId: docId,
+          specialityId: targetSpecId,
+          score: vivaScore,
+          remarks: "Coordinator Direct Entry"
+        });
+      }
+    }
+  }
 
   // Optionally add to panel queue
   if (panelId) {
@@ -816,7 +866,11 @@ router.patch("/candidates/:candidateId/marks", requireAuth, requireRole("super_a
   }
 
   const updatedAny = updated as any;
-  res.json({ id: updated.id, mcqScore: updatedAny.mcqScore != null ? Number(updatedAny.mcqScore) : null, psychometricScore: updatedAny.psychometricScore != null ? Number(updatedAny.psychometricScore) : null });
+  res.json({ 
+    id: updated.id, 
+    mcqScore: updatedAny.mcqScore != null ? Number(updatedAny.mcqScore) : null, 
+    psychometricScore: updatedAny.psychometricScore != null ? Number(updatedAny.psychometricScore) : null 
+  });
 });
 
 router.get("/candidates/:candidateId", requireAuth, async (req, res) => {

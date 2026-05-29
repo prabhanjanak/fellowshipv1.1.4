@@ -224,9 +224,10 @@ router.post("/panels/:id/queue",
     const nextPos = Number(maxRow!["max_pos"]) + 1;
 
     await db.execute(sql`
-      INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status)
-      VALUES (${panelId}, ${candidateId}, ${nextPos}, 'waiting')
-      ON CONFLICT (panel_id, candidate_id) DO NOTHING
+      INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status, called_at)
+      VALUES (${panelId}, ${candidateId}, ${nextPos}, 'waiting', NULL)
+      ON CONFLICT (panel_id, candidate_id) DO UPDATE 
+      SET status = 'waiting', queue_position = ${nextPos}, called_at = NULL
     `);
     res.json({ success: true });
   }

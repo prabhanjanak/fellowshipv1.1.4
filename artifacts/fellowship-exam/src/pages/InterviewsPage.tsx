@@ -979,9 +979,9 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
                             .filter((c) => !panelQueue.find((q) => q.candidateId === c.id && q.status !== "done"))
                             .filter((c) => {
                               if (!selectedPanel?.specialityId) return true; // General panel accepts any candidate
-                              const hasApp = (c as any).applications?.some((app: any) => app.specialityId === selectedPanel.specialityId);
-                              const specName = specialities.find(s => s.id === selectedPanel.specialityId)?.name;
-                              const hasPref = specName ? (c as any).specializations?.some((s: string) => s.toLowerCase() === specName.toLowerCase()) : false;
+                              const specId = Number(selectedPanel.specialityId);
+                              const hasApp = (c as any).applications?.some((app: any) => Number(app.specialityId) === specId);
+                              const hasPref = (c as any).preferences?.some((p: any) => Number(p.specialityId) === specId);
                               return hasApp || hasPref;
                             })
                             .map((c) => (
@@ -1136,6 +1136,100 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
   );
 }
 
+/* ─── Helper Editable Score Cell Component ─── */
+function EditableCell({ 
+  value, 
+  onSave, 
+  max, 
+  canEdit 
+}: { 
+  value: number | null; 
+  onSave: (val: number | null) => Promise<void>; 
+  max: number; 
+  canEdit: boolean; 
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [tempValue, setTempValue] = useState<string>(value !== null ? String(value) : "");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setTempValue(value !== null ? String(value) : "");
+  }, [value]);
+
+  if (!canEdit) {
+    return <span className="tabular-nums font-mono text-xs text-slate-650">{value !== null ? value.toFixed(1) : "—"}</span>;
+  }
+
+  const handleBlurOrEnter = async () => {
+    if (isSaving) return;
+    setIsEditing(false);
+    
+    const trimmed = tempValue.trim();
+    if (trimmed === "") {
+      if (value !== null) {
+        setIsSaving(true);
+        try {
+          await onSave(null);
+        } catch {}
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    const num = parseFloat(trimmed);
+    if (isNaN(num) || num < 0 || num > max) {
+      setTempValue(value !== null ? String(value) : "");
+      return;
+    }
+
+    if (num !== value) {
+      setIsSaving(true);
+      try {
+        await onSave(num);
+      } catch {}
+      setIsSaving(false);
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <Input
+        type="number"
+        step="0.1"
+        min="0"
+        max={max}
+        className="w-18 h-7 text-xs text-right font-mono border-orange-400 focus:ring-orange-500 rounded px-1.5 py-0.5 bg-amber-50/50"
+        value={tempValue}
+        onChange={(e) => setTempValue(e.target.value)}
+        onBlur={handleBlurOrEnter}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleBlurOrEnter();
+          if (e.key === "Escape") {
+            setIsEditing(false);
+            setTempValue(value !== null ? String(value) : "");
+          }
+        }}
+        autoFocus
+      />
+    );
+  }
+
+  return (
+    <div 
+      onClick={() => setIsEditing(true)} 
+      className="inline-flex items-center gap-1 cursor-pointer hover:bg-slate-100 px-2 py-1 rounded border border-dashed border-transparent hover:border-slate-300/65 transition-all font-mono text-slate-700 font-bold text-xs"
+      title="Click to edit score"
+    >
+      {isSaving ? (
+        <span className="text-[10px] text-orange-500 animate-pulse font-sans font-medium">saving…</span>
+      ) : (
+        <span className="tabular-nums">{value !== null ? value.toFixed(1) : "—"}</span>
+      )}
+      <span className="text-[9px] text-slate-350 select-none">✏️</span>
+    </div>
+  );
+}
+
 /* ─── Premium Mark Sheet Tab Component ─── */
 function MarkSheetTab({ specialities, candidates, scores, isCEC, toast }: {
   specialities: { id: number; name: string; code: string }[];
@@ -1146,6 +1240,40 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast }: {
 }) {
   const [selectedSpec, setSelectedSpec] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const { user } = useAuth();
+  const qc = useQueryClient();
+
+  const canEdit = user?.role === "central_exam_coordinator" || user?.role === "super_admin" || user?.role === "program_admin";
+
+  const updateScoreMutation = useMutation({
+    mutationFn: ({ 
+      candidateId, 
+      mcqScore, 
+      psychometricScore, 
+      vivaScore 
+    }: { 
+      candidateId: number; 
+      mcqScore?: number | null; 
+      psychometricScore?: number | null; 
+      vivaScore?: number | null; 
+    }) => {
+      const specId = selectedSpec !== "all" ? Number(selectedSpec) : null;
+      return api.patch(`/candidates/${candidateId}/marks`, {
+        mcqScore,
+        psychometricScore,
+        vivaScore,
+        specialityId: specId
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Score updated successfully" });
+      qc.invalidateQueries({ queryKey: ["candidates"] });
+      qc.invalidateQueries({ queryKey: ["interview-scores"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Failed to update score", description: e.message, variant: "destructive" });
+    }
+  });
 
   const getSpecsArray = (c: any): string[] => {
     if (!c.specializations) return [];
@@ -1306,8 +1434,8 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast }: {
                       ? candScores.reduce((sum, s) => sum + s.score, 0) / candScores.length
                       : null;
 
-                    const mcqScore = c.mcqScore ?? null;
-                    const mindMatterScore = c.psychometricScore ?? null;
+                    const mcqScore = c.mcqScore !== null ? Number(c.mcqScore) : null;
+                    const mindMatterScore = c.psychometricScore !== null ? Number(c.psychometricScore) : null;
                     
                     const totalScore = (mcqScore !== null || avgViva !== null || mindMatterScore !== null)
                       ? (mcqScore ?? 0) + (avgViva ?? 0) + (mindMatterScore ?? 0)
@@ -1336,14 +1464,26 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast }: {
                             {c.candidateCode}
                           </span>
                         </td>
-                        <td className="px-4 py-4 text-right tabular-nums text-sm font-mono text-slate-650">
-                          {mcqScore !== null ? mcqScore.toFixed(1) : "—"}
+                        <td className="px-4 py-4 text-right">
+                          <EditableCell
+                            value={mcqScore}
+                            max={50}
+                            canEdit={canEdit}
+                            onSave={async (val) => {
+                              await updateScoreMutation.mutateAsync({ candidateId: c.id, mcqScore: val });
+                            }}
+                          />
                         </td>
                         <td className="px-4 py-4 text-right">
                           <div className="flex flex-col items-end">
-                            <span className="tabular-nums text-sm font-mono text-slate-650">
-                              {avgViva !== null ? avgViva.toFixed(1) : "—"}
-                            </span>
+                            <EditableCell
+                              value={avgViva}
+                              max={50}
+                              canEdit={canEdit}
+                              onSave={async (val) => {
+                                await updateScoreMutation.mutateAsync({ candidateId: c.id, vivaScore: val });
+                              }}
+                            />
                             {candScores.length > 0 && (
                               <span className="text-[9px] text-muted-foreground font-black uppercase tracking-wider mt-0.5">
                                 {candScores.length} {candScores.length === 1 ? "doc" : "docs"}
@@ -1351,8 +1491,15 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast }: {
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-4 text-right tabular-nums text-sm font-mono text-slate-650">
-                          {mindMatterScore !== null ? mindMatterScore.toFixed(1) : "—"}
+                        <td className="px-4 py-4 text-right">
+                          <EditableCell
+                            value={mindMatterScore}
+                            max={10}
+                            canEdit={canEdit}
+                            onSave={async (val) => {
+                              await updateScoreMutation.mutateAsync({ candidateId: c.id, psychometricScore: val });
+                            }}
+                          />
                         </td>
                         <td className="px-6 py-4 text-right">
                           {totalScore !== null ? (

@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db, usersTable, candidatesTable, globalSettingsTable } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logger } from "../lib/logger";
+import { parseSpecializationString } from "../lib/utils";
 
 const router: Router = Router();
 
@@ -213,7 +214,34 @@ router.post("/panels/:id/queue",
       `)).rows;
 
       if (prefs.length === 0 && apps.length === 0) {
-        return res.status(400).json({ error: "Candidate has not applied for this panel's specialization." });
+        // Fallback check: see if the specialization name exists in the parsed application submissions
+        let hasApplied = false;
+        const [candidate] = (await db.execute(sql`
+          SELECT email FROM candidates WHERE id = ${candidateId}
+        `)).rows as Array<{ email: string }>;
+
+        if (candidate && candidate.email) {
+          const submissions = (await db.execute(sql`
+            SELECT specialization FROM application_submissions 
+            WHERE email = ${candidate.email} OR candidate_id = ${candidateId}
+          `)).rows as Array<{ specialization: string | null }>;
+
+          const [specRow] = (await db.execute(sql`
+            SELECT name FROM specialities WHERE id = ${specId}
+          `)).rows as Array<{ name: string }>;
+
+          if (specRow && specRow.name) {
+            hasApplied = submissions.some(sub => {
+              if (!sub.specialization) return false;
+              const parsedSpecs = parseSpecializationString(sub.specialization);
+              return parsedSpecs.some(specName => specName.toLowerCase() === specRow.name.toLowerCase());
+            });
+          }
+        }
+
+        if (!hasApplied) {
+          return res.status(400).json({ error: "Candidate has not applied for this panel's specialization." });
+        }
       }
     }
 

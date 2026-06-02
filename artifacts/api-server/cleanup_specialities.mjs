@@ -1,6 +1,31 @@
 import pg from 'pg';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 async function main() {
+  // Automatically load environment variables from local .env file if it exists
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const envPath = path.resolve(__dirname, '.env');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf8');
+      for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf('=');
+        if (idx > 0) {
+          const key = trimmed.slice(0, idx).trim();
+          const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+          process.env[key] = val;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load .env file automatically:", err.message);
+  }
+
   // Use production DATABASE_URL if available, otherwise fallback to local connection string
   const connectionString = process.env.DATABASE_URL || "postgresql://postgres:admin@localhost:5432/fellowship_db";
   const client = new pg.Client({ connectionString });

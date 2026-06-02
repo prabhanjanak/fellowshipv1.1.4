@@ -89,6 +89,7 @@ export default function InterviewsPage() {
 /* ─── Doctor View ─── */
 function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/use-toast").useToast>["toast"]; qc: ReturnType<typeof useQueryClient> }) {
   const [scoreOpen, setScoreOpen] = useState<DoctorAssignment | null>(null);
+  const [dossierOpen, setDossierOpen] = useState<DoctorAssignment | null>(null);
   const [score, setScore] = useState("");
   const [remarks, setRemarks] = useState("");
   const [activeDossierTab, setActiveDossierTab] = useState<"profile" | "pdf" | "lors" | "docs">("profile");
@@ -100,9 +101,9 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
   });
 
   const { data: candDetails, isLoading: candLoading } = useQuery<any>({
-    queryKey: ["candidate-details", scoreOpen?.candidateId],
-    queryFn: () => api.get(`/candidates/${scoreOpen?.candidateId}`),
-    enabled: !!scoreOpen?.candidateId,
+    queryKey: ["candidate-details", scoreOpen?.candidateId || dossierOpen?.candidateId],
+    queryFn: () => api.get(`/candidates/${scoreOpen?.candidateId || dossierOpen?.candidateId}`),
+    enabled: !!(scoreOpen?.candidateId || dossierOpen?.candidateId),
   });
 
   const { data: specialities = [] } = useQuery<{ id: number; name: string; code: string }[]>({
@@ -215,7 +216,13 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                     <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20">
                       <td className="px-4 py-3 font-medium">
                         <div>
-                          {a.candidateName}
+                          <button
+                            onClick={() => setDossierOpen(a)}
+                            className="font-bold text-indigo-600 hover:text-indigo-850 hover:underline text-left cursor-pointer transition-colors"
+                            title="Click to open Candidate Dossier (Photo, Application, LORs)"
+                          >
+                            {a.candidateName}
+                          </button>
                           {a.specialityName && (
                             <span className="block text-[10px] text-muted-foreground">{a.specialityName}</span>
                           )}
@@ -565,6 +572,181 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                   <p className="text-[9px] font-bold text-center text-slate-400 uppercase tracking-widest mt-1">
                     * Evaluation lock synchronizes marks to counseling queue atomically
                   </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Candidate Dossier Modal (Photo, Application Form, LORs) ─── */}
+      <Dialog open={!!dossierOpen} onOpenChange={() => setDossierOpen(null)}>
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] p-0 rounded-[32px] overflow-hidden border border-slate-200 bg-white shadow-2xl flex flex-col">
+          <DialogHeader className="bg-slate-900 text-white p-6 shrink-0 border-b border-white/5 flex flex-row items-center justify-between">
+            <div>
+              <DialogTitle className="text-xl font-black uppercase tracking-widest text-white flex items-center gap-2">
+                <FileText className="h-5.5 w-5.5 text-orange-400" />
+                Candidate Dossier — {dossierOpen?.candidateName}
+              </DialogTitle>
+              <div className="flex gap-2 mt-2">
+                <Badge variant="outline" className="text-[10px] font-black uppercase text-orange-200 border-orange-500/30 bg-orange-500/10 h-6 px-3 border-none">
+                  Code: {dossierOpen?.candidateCode}
+                </Badge>
+                {dossierOpen?.specialityName && (
+                  <Badge variant="outline" className="text-[10px] font-black uppercase text-indigo-200 border-indigo-500/30 bg-indigo-500/10 h-6 px-3 border-none">
+                    Panel: {dossierOpen.specialityName}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setDossierOpen(null)}
+              className="text-white/60 hover:text-white hover:bg-white/10 rounded-full h-8 w-8"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </DialogHeader>
+
+          {dossierOpen && (
+            <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-0 overflow-hidden min-h-[50vh]">
+              {/* Left Column: Passport Photo, Profile Details, and LORs */}
+              <div className="lg:col-span-1 border-r border-slate-200 bg-slate-50 flex flex-col p-6 space-y-6 overflow-y-auto fancy-scrollbar">
+                
+                {/* 1. Passport Photo Card */}
+                <div className="flex flex-col items-center text-center space-y-3.5 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                  <div className="h-32 w-32 rounded-2xl bg-orange-50 border-2 border-orange-100 flex items-center justify-center font-black text-5xl text-orange-600 shadow-inner overflow-hidden relative">
+                    {candLoading ? (
+                      <Loader2 className="h-6 w-6 animate-spin text-orange-500" />
+                    ) : (() => {
+                      const photoDoc = candDetails?.documents?.find((d: any) => 
+                        d.docType?.toLowerCase().includes("photo") || 
+                        d.docType?.toLowerCase().includes("profile") ||
+                        d.docType?.toLowerCase().includes("picture")
+                      );
+                      if (photoDoc) {
+                        return <img src={photoDoc.fileUrl || `/api/documents/${photoDoc.id}`} alt="Passport Photo" className="h-full w-full object-cover" />;
+                      }
+                      return dossierOpen.candidateName.charAt(0).toUpperCase();
+                    })()}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 leading-tight">{dossierOpen.candidateName}</h3>
+                    <p className="text-xs font-mono font-bold text-slate-400 mt-1 uppercase">{dossierOpen.candidateCode}</p>
+                  </div>
+                </div>
+
+                {/* 2. Personal Details Widget */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none border-b pb-2">Academic Profile</h4>
+                  {candLoading ? (
+                    <div className="flex items-center justify-center py-4 text-slate-400 gap-1.5 font-bold text-xs">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />
+                      Loading profile...
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 text-left">
+                      <div className="space-y-0.5">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Email Contact</span>
+                        <p className="text-xs font-semibold text-slate-850 truncate">{candDetails?.email || "N/A"}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Phone Number</span>
+                        <p className="text-xs font-semibold text-slate-850">{candDetails?.phone || "N/A"}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">UG Degree</span>
+                        <p className="text-xs font-semibold text-slate-850 truncate">{candDetails?.qualification || "N/A"}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">PG Specialization</span>
+                        <p className="text-xs font-semibold text-slate-850 truncate">{candDetails?.pgQualifications || "N/A"}</p>
+                      </div>
+                      <div className="space-y-0.5">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">University</span>
+                        <p className="text-xs font-semibold text-slate-850 truncate" title={candDetails?.collegeName}>{candDetails?.collegeName || "N/A"}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. LOR 1 & LOR 2 File Access Card */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none border-b pb-2 flex items-center gap-1.5">
+                    <FileText className="h-3.5 w-3.5 text-indigo-500" />
+                    Letters of Recommendation (LOR)
+                  </h4>
+                  {candLoading ? (
+                    <div className="flex items-center justify-center py-4 text-slate-400 gap-1.5 font-bold text-xs">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-orange-500" />
+                      Loading LOR files...
+                    </div>
+                  ) : (() => {
+                    const lors = candDetails?.documents?.filter((d: any) => 
+                      d.docType?.toLowerCase().includes("lor") || 
+                      d.fileName?.toLowerCase().includes("lor") || 
+                      d.fileName?.toLowerCase().includes("recommendation")
+                    ) || [];
+
+                    if (lors.length === 0) {
+                      return (
+                        <div className="text-center py-4 text-slate-400 text-[11px] font-bold flex flex-col items-center justify-center gap-1 bg-slate-50 rounded-xl">
+                          <AlertTriangle className="h-5 w-5 text-amber-500" />
+                          No LOR files uploaded
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 gap-2.5">
+                        {lors.map((lor: any, idx: number) => (
+                          <Button
+                            key={lor.id}
+                            size="sm"
+                            variant="outline"
+                            onClick={() => window.open(lor.fileUrl || `/api/documents/${lor.id}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                            className="h-10 text-[10px] font-black uppercase text-indigo-700 border-indigo-200 hover:bg-indigo-50 w-full flex items-center justify-center gap-2 rounded-xl shadow-xs"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            Open LOR {idx + 1}
+                          </Button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+              </div>
+
+              {/* Right Column: Printed Application Form Reader */}
+              <div className="lg:col-span-2 bg-slate-100 flex flex-col h-full overflow-hidden">
+                <div className="px-6 py-3 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Printed Application Form Viewer</span>
+                  {dossierOpen.submissionId && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => window.open(`/api/submission-view/${dossierOpen.submissionId}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                      className="h-8 text-[10px] font-extrabold uppercase text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 gap-1 rounded-lg"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open Full Tab
+                    </Button>
+                  )}
+                </div>
+                <div className="flex-1 p-4 overflow-hidden relative bg-slate-200">
+                  {dossierOpen.submissionId ? (
+                    <iframe 
+                      src={`/api/submission-view/${dossierOpen.submissionId}?token=${localStorage.getItem("fellowship_token")}`} 
+                      className="w-full h-full border-none rounded-2xl shadow-inner bg-white absolute inset-0 p-4" 
+                      title="Application Form Viewer"
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-slate-450 text-xs font-bold bg-white/70 rounded-2xl m-4 border-2 border-dashed border-slate-200">
+                      No application submission found for this candidate
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

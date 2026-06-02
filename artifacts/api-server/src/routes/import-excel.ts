@@ -31,6 +31,21 @@ function normName(s: string): string {
   return s.trim().replace(/^dr\.?\s+/i, "Dr. ");
 }
 
+function getCanonicalSpecialtyName(name: string): string {
+  const norm = name.toLowerCase().trim();
+  if (norm.includes("medical retina")) return "Medical Retina";
+  if (norm.includes("vitreo-retina") || norm.includes("vitreo retina") || norm.includes("pediatric retina") || norm.includes("retina")) {
+    return "Vitreo Retina";
+  }
+  if (norm.includes("pediatric") || norm.includes("pediatric ophthalmology")) return "Pediatric Ophthalmology";
+  if (norm.includes("cornea & anterior segment") || norm.includes("cornea") || norm.includes("ocular surface")) return "Cornea";
+  if (norm.includes("glaucoma")) return "Glaucoma";
+  if (norm.includes("iol") || norm.includes("fellowship")) return "IOL Fellowship";
+  if (norm.includes("oculoplasty")) return "Oculoplasty";
+  if (norm.includes("phaco") || norm.includes("refractive")) return "Phaco Refractive";
+  return name; // fallback
+}
+
 // Map Excel specialization label → canonical name used in DB
 const SPEC_ALIAS: Record<string, string> = {
   "iol": "IOL Fellowship",
@@ -156,7 +171,7 @@ router.post("/import/excel", requireAuth, requireRole("super_admin", "central_ex
 
       const ts = typeof row[COL.TIMESTAMP] === "number" ? (row[COL.TIMESTAMP] as number) : 0;
       const rawSpec = cell(row as unknown[], COL.SPECIALIZATION);
-      const canonSpec = SPEC_ALIAS[rawSpec.toLowerCase()] ?? rawSpec;
+      const canonSpec = getCanonicalSpecialtyName(rawSpec);
       const centerCol = SPEC_CENTER_COL[canonSpec];
       const centerPref = centerCol != null ? cell(row as unknown[], centerCol) : "";
 
@@ -466,7 +481,7 @@ router.post("/import/excel/process", requireAuth, requireRole("super_admin", "ce
 
       const ts = typeof row[mapping["TIMESTAMP"] ?? -1] === "number" ? (row[mapping["TIMESTAMP"]!] as number) : 0;
       const rawSpec = col(row, "SPECIALIZATION");
-      const canonSpec = SPEC_ALIAS[rawSpec.toLowerCase()] ?? rawSpec;
+      const canonSpec = getCanonicalSpecialtyName(rawSpec);
       const centerKey = SPEC_CENTER_KEYS[canonSpec.toLowerCase()];
       const centerPref = centerKey ? col(row, centerKey) : "";
 

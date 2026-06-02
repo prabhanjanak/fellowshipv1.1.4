@@ -1,44 +1,113 @@
 import pg from 'pg';
 
 async function main() {
-  const connectionString = "postgresql://postgres:admin@localhost:5432/fellowship_db";
+  // Use production DATABASE_URL if available, otherwise fallback to local connection string
+  const connectionString = process.env.DATABASE_URL || "postgresql://postgres:admin@localhost:5432/fellowship_db";
   const client = new pg.Client({ connectionString });
   await client.connect();
 
-  console.log("Connected to database. Starting ultra-robust specialty cleanup...");
+  console.log(`Connected to database. Starting robust specialty cleanup...`);
 
-  // Keep only the 8 standard specialties: IDs 15, 16, 17, 18, 19, 20, 21, 22
-  const standardIds = [15, 16, 17, 18, 19, 20, 21, 22];
+  // 1. Fetch all existing specialties
+  const specRes = await client.query("SELECT id, name, code, program_id FROM specialities ORDER BY id ASC");
+  const allSpecs = specRes.rows;
+  console.log(`Found ${allSpecs.length} specialties in database.`);
+  console.table(allSpecs);
 
-  // Fetch all specialties from the database
-  const specRes = await client.query("SELECT id, name FROM specialities");
-  const specialitiesMap = {};
-  for (const row of specRes.rows) {
-    specialitiesMap[row.id] = row.name;
+  // 2. Fetch the first program ID to use for any missing canonical insertions
+  const progRes = await client.query("SELECT id FROM programs LIMIT 1");
+  const defaultProgramId = progRes.rows[0]?.id;
+  if (!defaultProgramId) {
+    console.error("No programs found in database. Seeding/migration must be run first.");
+    await client.end();
+    return;
   }
 
-  console.log("Found specialties in database:");
-  console.table(specRes.rows);
+  // Define 8 canonical standard specialties
+  const standardSpecs = [
+    { name: 'Cornea', code: 'CORN' },
+    { name: 'Glaucoma', code: 'GLAU' },
+    { name: 'IOL Fellowship', code: 'IOLF' },
+    { name: 'Medical Retina', code: 'MEDI' },
+    { name: 'Oculoplasty', code: 'OCUL' },
+    { name: 'Pediatric Ophthalmology', code: 'PEDI' },
+    { name: 'Phaco Refractive', code: 'PHAC' },
+    { name: 'Vitreo Retina', code: 'VITR' }
+  ];
 
-  function getStandardId(specId, name) {
-    if (standardIds.includes(Number(specId))) {
-      return Number(specId);
+  // Helper to match a name to a canonical standard name
+  function getCanonicalName(name) {
+    const norm = name.toLowerCase().trim();
+    if (norm.includes('medical retina')) {
+      return 'Medical Retina';
     }
-    if (!name) return null;
-    const normName = name.toLowerCase().trim();
-    if (normName.includes('vitreo-retina') || normName.includes('vitreo retina')) return 22;
-    if (normName.includes('pediatric retina')) return 22; // Retina specialty
-    if (normName.includes('medical retina')) return 18;
-    if (normName.includes('pediatric ophthalmology') || normName.includes('pediatric')) return 20;
-    if (normName.includes('cornea & anterior segment') || normName.includes('cornea') || normName.includes('ocular surface')) return 15;
-    if (normName.includes('glaucoma')) return 16;
-    if (normName.includes('iol')) return 17;
-    if (normName.includes('oculoplasty')) return 19;
-    if (normName.includes('phaco') || normName.includes('refractive')) return 21;
+    if (norm.includes('vitreo-retina') || norm.includes('vitreo retina') || norm.includes('pediatric retina') || norm.includes('retina')) {
+      return 'Vitreo Retina';
+    }
+    if (norm.includes('pediatric ophthalmology') || norm.includes('pediatric')) {
+      return 'Pediatric Ophthalmology';
+    }
+    if (norm.includes('cornea & anterior segment') || norm.includes('cornea') || norm.includes('ocular surface')) {
+      return 'Cornea';
+    }
+    if (norm.includes('glaucoma')) {
+      return 'Glaucoma';
+    }
+    if (norm.includes('iol') || norm.includes('fellowship')) {
+      return 'IOL Fellowship';
+    }
+    if (norm.includes('oculoplasty')) {
+      return 'Oculoplasty';
+    }
+    if (norm.includes('phaco') || norm.includes('refractive')) {
+      return 'Phaco Refractive';
+    }
     return null;
   }
 
-  // 7 dependent tables containing speciality_id
+  // 3. Resolve the canonical ID for each of the 8 standard specialties
+  const canonicalMap = {}; // name -> id
+
+  for (const stdSpec of standardSpecs) {
+    const matched = allSpecs.find(s => getCanonicalName(s.name) === stdSpec.name);
+    if (matched) {
+      canonicalMap[stdSpec.name] = matched.id;
+      console.log(`Matched canonical specialty "${stdSpec.name}" to existing ID ${matched.id}`);
+    } else {
+      // Missing canonical specialty. Let's insert it dynamically.
+      const insRes = await client.query(
+        "INSERT INTO specialities (program_id, name, code, seats) VALUES ($1, $2, $3, $4) RETURNING id",
+        [defaultProgramId, stdSpec.name, stdSpec.code, 0]
+      );
+      const newId = insRes.rows[0].id;
+      canonicalMap[stdSpec.name] = newId;
+      console.log(`Created missing canonical specialty "${stdSpec.name}" with ID ${newId}`);
+    }
+  }
+
+  // Keep a set of the 8 canonical IDs
+  const canonicalIds = Object.values(canonicalMap);
+
+  // 4. Map EVERY specialty ID to a canonical ID
+  const specMapping = {}; // oldId -> newId
+  for (const s of allSpecs) {
+    if (canonicalIds.includes(s.id)) {
+      specMapping[s.id] = s.id; // already canonical
+      continue;
+    }
+
+    const targetName = getCanonicalName(s.name);
+    if (targetName && canonicalMap[targetName]) {
+      specMapping[s.id] = canonicalMap[targetName];
+      console.log(`Mapping duplicate/non-standard ID ${s.id} ("${s.name}") to canonical ID ${canonicalMap[targetName]} ("${targetName}")`);
+    } else {
+      // Fallback: Map to 'IOL Fellowship' (or any standard) if completely unmatched
+      specMapping[s.id] = canonicalMap['IOL Fellowship'];
+      console.log(`WARNING: Unmatched specialty ID ${s.id} ("${s.name}"). Fallback map to canonical 'IOL Fellowship' ID ${canonicalMap['IOL Fellowship']}`);
+    }
+  }
+
+  // 5. Update dependent tables
   const tables = [
     'allocations',
     'applications',
@@ -50,60 +119,56 @@ async function main() {
   ];
 
   for (const table of tables) {
-    console.log(`Processing table: ${table}...`);
+    console.log(`\nProcessing table "${table}"...`);
 
-    // Fetch all rows from this table where speciality_id is not in our standard set
+    // Fetch all rows with a non-canonical specialty ID
     const rowsRes = await client.query(`
       SELECT id, speciality_id 
       FROM ${table} 
-      WHERE speciality_id IS NOT NULL AND speciality_id NOT IN (15, 16, 17, 18, 19, 20, 21, 22)
+      WHERE speciality_id IS NOT NULL
     `);
 
-    console.log(`Found ${rowsRes.rows.length} rows to check in table "${table}".`);
+    let updatedCount = 0;
+    let deletedCount = 0;
 
     for (const row of rowsRes.rows) {
-      const currentSpecId = row.speciality_id;
-      const specName = specialitiesMap[currentSpecId];
-      const targetId = getStandardId(currentSpecId, specName);
+      const currentId = row.speciality_id;
+      const targetId = specMapping[currentId];
 
-      if (targetId !== null) {
-        // Try updating to the target standard ID
+      if (targetId && targetId !== currentId) {
         try {
           await client.query(`UPDATE ${table} SET speciality_id = $1 WHERE id = $2`, [targetId, row.id]);
-          console.log(`Updated row ${row.id} in "${table}" from spec ${currentSpecId} (${specName}) -> ${targetId}`);
+          updatedCount++;
         } catch (err) {
           if (err.code === '23505') {
-            // Unique key violation -> this row is a duplicate, delete it safely
-            console.log(`Unique key violation on row ${row.id} in "${table}" when updating to ${targetId}. Deleting duplicate row...`);
+            // Unique constraint violation (duplicate entry) -> delete the duplicate row
             await client.query(`DELETE FROM ${table} WHERE id = $1`, [row.id]);
+            deletedCount++;
           } else {
             console.error(`Unexpected error updating row ${row.id} in "${table}":`, err.message);
             throw err;
           }
         }
-      } else {
-        // No standard specialty mapping -> delete referencing row
-        console.log(`No mapping for spec ${currentSpecId} (${specName}). Deleting row ${row.id} in "${table}"...`);
-        await client.query(`DELETE FROM ${table} WHERE id = $1`, [row.id]);
       }
     }
+
+    console.log(`Table "${table}": Updated ${updatedCount} rows, Deleted ${deletedCount} duplicates.`);
   }
 
-  // Finally, delete all non-standard specialties from the specialities table
-  console.log("Deleting non-standard specialties from the specialities table...");
-  const deleteRes = await client.query(`
-    DELETE FROM specialities 
-    WHERE id NOT IN (15, 16, 17, 18, 19, 20, 21, 22)
-  `);
-  console.log(`Deleted ${deleteRes.rowCount} non-standard specialties.`);
+  // 6. Delete all non-canonical specialties from the specialities table
+  console.log("\nDeleting non-canonical specialties from the specialities table...");
+  const deleteRes = await client.query(
+    "DELETE FROM specialities WHERE id NOT IN (" + canonicalIds.join(",") + ")"
+  );
+  console.log(`Deleted ${deleteRes.rowCount} duplicate/non-canonical specialties.`);
 
-  // Confirm remaining specialties in the DB
-  const finalRes = await client.query("SELECT id, name, code FROM specialities ORDER BY id");
-  console.log("REMAINING SPECIALITIES:");
+  // 7. Confirm final list
+  const finalRes = await client.query("SELECT id, name, code FROM specialities ORDER BY id ASC");
+  console.log("\nFINAL REMAINING SPECIALITIES IN DATABASE:");
   console.table(finalRes.rows);
 
   await client.end();
-  console.log("Cleanup completed successfully!");
+  console.log("\nCleanup completed successfully!");
 }
 
 main().catch(console.error);

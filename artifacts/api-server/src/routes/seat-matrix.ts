@@ -9,6 +9,21 @@ import { requireAuth, requireRole } from "../middleware/auth";
 
 const router: Router = Router();
 
+function getCanonicalSpecialtyName(name: string): string {
+  const norm = name.toLowerCase().trim();
+  if (norm.includes("medical retina")) return "Medical Retina";
+  if (norm.includes("vitreo-retina") || norm.includes("vitreo retina") || norm.includes("pediatric retina") || norm.includes("retina")) {
+    return "Vitreo Retina";
+  }
+  if (norm.includes("pediatric") || norm.includes("pediatric ophthalmology")) return "Pediatric Ophthalmology";
+  if (norm.includes("cornea & anterior segment") || norm.includes("cornea") || norm.includes("ocular surface")) return "Cornea";
+  if (norm.includes("glaucoma")) return "Glaucoma";
+  if (norm.includes("iol") || norm.includes("fellowship")) return "IOL Fellowship";
+  if (norm.includes("oculoplasty")) return "Oculoplasty";
+  if (norm.includes("phaco") || norm.includes("refractive")) return "Phaco Refractive";
+  return name; // fallback
+}
+
 const SPEC_ALIAS: Record<string, string> = {
   "cornea": "Cornea",
   "glaucoma": "Glaucoma",
@@ -77,7 +92,7 @@ function parseMatrixFromFile() {
 
   const rows = dataRows.map((r) => {
     const rawSpec = String(r[1] ?? "").trim();
-    const specName = SPEC_ALIAS[rawSpec.toLowerCase()] ?? rawSpec;
+    const specName = getCanonicalSpecialtyName(rawSpec);
     const seats: Record<string, number> = {};
     for (let i = 0; i < units.length; i++) {
       const v = r[i + 2];
@@ -253,7 +268,7 @@ router.post(
     const { name, programId: pidRaw } = req.body as { name: string; programId?: number };
     if (!name?.trim()) { res.status(400).json({ error: "name required" }); return; }
     if (!pidRaw) { res.status(400).json({ error: "programId required" }); return; }
-    const speciality = name.trim();
+    const speciality = getCanonicalSpecialtyName(name.trim());
     const progId = Number(pidRaw);
 
     const existing = await db.execute(sql`

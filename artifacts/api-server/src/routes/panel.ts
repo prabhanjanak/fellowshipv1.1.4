@@ -82,9 +82,10 @@ router.post("/panels",
     };
     if (!name || !roomNumber) return res.status(400).json({ error: "name and roomNumber required" });
 
+    const isMock = (req as any).isMockMode ?? false;
     const [panel] = (await db.execute(sql`
-      INSERT INTO interview_panels (name, room_number, program_id, speciality_id, is_mind_matter)
-      VALUES (${name}, ${roomNumber}, ${programId ?? null}, ${specialityId ?? null}, ${isMindMatter ?? false})
+      INSERT INTO interview_panels (name, room_number, program_id, speciality_id, is_mind_matter, is_mock)
+      VALUES (${name}, ${roomNumber}, ${programId ?? null}, ${specialityId ?? null}, ${isMindMatter ?? false}, ${isMock})
       RETURNING *
     `)).rows as Array<Record<string, unknown>>;
 

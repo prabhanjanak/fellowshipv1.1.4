@@ -1486,8 +1486,10 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
   const autoAssignMutation = useMutation({
     mutationFn: (panelId: number) => api.post(`/panels/${panelId}/queue/auto-assign`, {}),
     onSuccess: (data: any) => {
-      toast({ title: "Auto-assign complete", description: `${data?.added ?? 0} candidate(s) added to queue.` });
-      qc.invalidateQueries({ queryKey: ["panel-queue", selectedPanelId] });
+      const added = (data as any)?.added ?? 0;
+      toast({ title: "Auto-assign complete", description: `${added} candidate(s) added to queue.` });
+      // Use refetchQueries to force a fresh fetch (bypasses 304 cache)
+      qc.refetchQueries({ queryKey: ["panel-queue", selectedPanelId] });
       qc.invalidateQueries({ queryKey: ["display-live"] });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),

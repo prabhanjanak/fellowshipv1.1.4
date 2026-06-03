@@ -382,6 +382,7 @@ router.post("/panels/:id/queue/auto-assign",
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
   async (req, res) => {
     const panelId = Number(req.params["id"]);
+    const isMock = (req as any).isMockMode ?? false;
     try {
       // Get panel's speciality
       const [panelRow] = (await db.execute(sql`
@@ -398,34 +399,67 @@ router.post("/panels/:id/queue/auto-assign",
       `)).rows as Array<Record<string, unknown>>;
       const existingIds = new Set(existingQueue.map(r => Number(r["candidate_id"])));
 
-      // Find all matching candidates
+      // Get ALL candidates in the correct mock mode
+      const allCandidates = (await db.execute(sql`
+        SELECT id, full_name, email FROM candidates WHERE is_mock = ${isMock} ORDER BY full_name ASC
+      `)).rows as Array<Record<string, unknown>>;
+
       let matchingCandidates: Array<{ id: number; fullName: string }>;
-      
+
       if (!specId) {
-        // General panel: get all candidates
-        matchingCandidates = (await db.execute(sql`
-          SELECT id, full_name FROM candidates WHERE is_mock = FALSE ORDER BY full_name ASC
-        `)).rows as Array<{ id: number; fullName: string }>;
-        matchingCandidates = matchingCandidates.map(r => ({ id: Number((r as any).id), fullName: String((r as any).full_name) }));
+        // General panel: all candidates are eligible
+        matchingCandidates = allCandidates.map(r => ({ id: Number(r["id"]), fullName: String(r["full_name"]) }));
       } else {
-        // Speciality-mapped panel: get candidates who applied for this speciality
-        const matchRows = (await db.execute(sql`
-          SELECT DISTINCT c.id, c.full_name
-          FROM candidates c
-          WHERE c.is_mock = FALSE
-            AND (
-              EXISTS (
-                SELECT 1 FROM candidate_preferences cp 
-                WHERE cp.candidate_id = c.id AND cp.speciality_id = ${specId}
-              )
-              OR EXISTS (
-                SELECT 1 FROM applications a 
-                WHERE a.candidate_id = c.id AND a.speciality_id = ${specId}
-              )
-            )
-          ORDER BY c.full_name ASC
+        // Get speciality name for application_submissions fallback
+        const [specRow] = (await db.execute(sql`
+          SELECT name FROM specialities WHERE id = ${specId}
         `)).rows as Array<Record<string, unknown>>;
-        matchingCandidates = matchRows.map(r => ({ id: Number(r["id"]), fullName: String(r["full_name"]) }));
+        const specName = specRow ? String(specRow["name"]) : null;
+
+        // Get candidates matching via candidate_preferences or applications tables
+        const prefMatches = new Set<number>(
+          ((await db.execute(sql`
+            SELECT DISTINCT candidate_id FROM candidate_preferences WHERE speciality_id = ${specId}
+          `)).rows as Array<Record<string, unknown>>).map(r => Number(r["candidate_id"]))
+        );
+        const appMatches = new Set<number>(
+          ((await db.execute(sql`
+            SELECT DISTINCT candidate_id FROM applications WHERE speciality_id = ${specId}
+          `)).rows as Array<Record<string, unknown>>).map(r => Number(r["candidate_id"]))
+        );
+
+        // Get all application_submissions for fallback matching
+        const allSubmissions = specName ? (await db.execute(sql`
+          SELECT email, candidate_id, specialization FROM application_submissions
+          WHERE specialization IS NOT NULL
+        `)).rows as Array<Record<string, unknown>> : [];
+
+        matchingCandidates = allCandidates
+          .filter(c => {
+            const cid = Number(c["id"]);
+            if (prefMatches.has(cid) || appMatches.has(cid)) return true;
+            // Fallback: check application_submissions by email or candidate_id
+            if (specName) {
+              return allSubmissions.some(sub => {
+                const matchesCandidate =
+                  (sub["candidate_id"] && Number(sub["candidate_id"]) === cid) ||
+                  (sub["email"] && c["email"] && String(sub["email"]).toLowerCase() === String(c["email"]).toLowerCase());
+                if (!matchesCandidate) return false;
+                const raw = String(sub["specialization"] ?? "");
+                const parsedSpecs = parseSpecializationString(raw);
+                return parsedSpecs.some(s => s.toLowerCase() === specName.toLowerCase());
+              });
+            }
+            return false;
+          })
+          .map(r => ({ id: Number(r["id"]), fullName: String(r["full_name"]) }));
+
+        // Sort A-Z by first name
+        matchingCandidates.sort((a, b) => {
+          const fa = (a.fullName ?? "").split(" ")[0]!.toLowerCase();
+          const fb = (b.fullName ?? "").split(" ")[0]!.toLowerCase();
+          return fa.localeCompare(fb);
+        });
       }
 
       // Get current max queue position

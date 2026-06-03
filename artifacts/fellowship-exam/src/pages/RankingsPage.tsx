@@ -64,10 +64,9 @@ export default function RankingsPage() {
   const qc = useQueryClient();
 
   const [selectedProgram, setSelectedProgram] = useState<string>("");
-  const [selectedTab, setSelectedTab] = useState<string>("overall");
+  const [selectedTab, setSelectedTab] = useState<string>("");
   const [isWeightModalOpen, setIsWeightModalOpen] = useState(false);
 
-  // Weight form states
   const [weightMcq, setWeightMcq] = useState("60");
   const [weightPsy, setWeightPsy] = useState("10");
   const [weightInt, setWeightInt] = useState("30");
@@ -94,6 +93,13 @@ export default function RankingsPage() {
     enabled: !!selectedProgram,
   });
 
+  // Auto select first speciality
+  useEffect(() => {
+    if (specialities.length > 0 && (!selectedTab || selectedTab === "overall")) {
+      setSelectedTab(String(specialities[0].id));
+    }
+  }, [specialities, selectedTab]);
+
   // Fetch Weightages config
   const { data: weights, refetch: refetchWeights } = useQuery<WeightConfig>({
     queryKey: ["rankings-weights"],
@@ -101,14 +107,23 @@ export default function RankingsPage() {
   });
 
   // Fetch Rankings based on selectedProgram and active worksheet/specialty tab
-  const activeSpecialityId = selectedTab === "overall" ? "" : selectedTab;
+  const activeSpecialityId = selectedTab;
   const { data: rankings = [], isLoading, refetch: refetchRankings } = useQuery<CandidateRank[]>({
     queryKey: ["rankings", selectedProgram, activeSpecialityId],
     queryFn: () => {
       const url = `/rankings?programId=${selectedProgram}${activeSpecialityId ? `&specialityId=${activeSpecialityId}` : ""}`;
       return api.get<CandidateRank[]>(url);
     },
-    enabled: !!selectedProgram,
+    enabled: !!selectedProgram && !!activeSpecialityId,
+  });
+
+  const sortedRankings = [...rankings].sort((a, b) => {
+    if (b.totalScore !== a.totalScore) {
+      return b.totalScore - a.totalScore;
+    }
+    const rankA = a.specialityRank ?? a.rank ?? 99999;
+    const rankB = b.specialityRank ?? b.rank ?? 99999;
+    return rankA - rankB;
   });
 
   // Pre-fill weight settings in modal
@@ -207,7 +222,7 @@ export default function RankingsPage() {
         <Card className="border-none shadow-md bg-white p-6 rounded-2xl">
           <div className="space-y-3">
             <Label className="text-xs font-black uppercase text-slate-500 tracking-wider">Academic Program context</Label>
-            <Select value={selectedProgram} onValueChange={(val) => { setSelectedProgram(val); setSelectedTab("overall"); }}>
+            <Select value={selectedProgram} onValueChange={(val) => { setSelectedProgram(val); setSelectedTab(""); }}>
               <SelectTrigger className="h-12 border-2 rounded-xl focus:ring-indigo-500">
                 <SelectValue placeholder="Select a program…" />
               </SelectTrigger>
@@ -260,12 +275,6 @@ export default function RankingsPage() {
           {/* Worksheet Tabs */}
           <Tabs value={selectedTab} onValueChange={setSelectedTab} className="w-full">
             <TabsList className="bg-slate-100 p-1 rounded-xl flex overflow-x-auto justify-start border-none max-w-full gap-1 h-12 scrollbar-hide">
-              <TabsTrigger 
-                value="overall" 
-                className="rounded-lg px-6 font-black uppercase text-[10px] tracking-widest h-10 data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm transition-all border-none shrink-0"
-              >
-                Overall Merit List
-              </TabsTrigger>
               {specialities.map((spec) => (
                 <TabsTrigger 
                   key={spec.id} 
@@ -283,7 +292,7 @@ export default function RankingsPage() {
                 <CardHeader className="pb-3 border-b flex flex-row items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2 text-slate-700">
                     <Trophy className="h-4 w-4 text-amber-500" /> 
-                    {selectedTab === "overall" ? "Overall Merit List" : `${specialities.find(s => String(s.id) === selectedTab)?.name} Specialty Rank List`}
+                    {`${specialities.find(s => String(s.id) === selectedTab)?.name ?? ""} Specialty Rank List`}
                   </CardTitle>
                   <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => refetchRankings()}>
                     <RefreshCw className="h-3 w-3 animate-spin" /> Reload List
@@ -296,14 +305,8 @@ export default function RankingsPage() {
                         <tr className="bg-slate-50 border-b text-xs uppercase font-bold text-slate-400 text-center">
                           <th className="px-4 py-3.5 text-left w-16">Rank</th>
                           <th className="px-4 py-3.5 text-left min-w-[200px]">Candidate Details</th>
-                          {selectedTab === "overall" ? (
-                            <th className="px-4 py-3.5 text-left">Top Preference</th>
-                          ) : (
-                            <>
-                              <th className="px-4 py-3.5 text-center">Spec Rank</th>
-                              <th className="px-4 py-3.5 text-center">Segment Rank</th>
-                            </>
-                          )}
+                          <th className="px-4 py-3.5 text-center">Spec Rank</th>
+                          <th className="px-4 py-3.5 text-center">Segment Rank</th>
                           <th className="px-4 py-3.5 text-left">Preferred Location</th>
                           <th className="px-4 py-3.5 text-left">Allocated Seat</th>
                           <th className="px-3 py-3.5 text-right w-20">MCQ ({weights ? weights.mcq : 50})</th>
@@ -314,11 +317,11 @@ export default function RankingsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {rankings.map((r, idx) => {
+                        {sortedRankings.map((r, idx) => {
                           const isAllocated = r.status === "allocated" || r.status === "Accepted" || r.status === "Upgraded";
                           
                           // Determine the displaying rank
-                          const currentRank = selectedTab === "overall" ? r.rank : (r.specialityRank ?? idx + 1);
+                          const currentRank = r.specialityRank ?? idx + 1;
 
                           return (
                             <tr 
@@ -346,22 +349,12 @@ export default function RankingsPage() {
                                 </div>
                               </td>
 
-                              {selectedTab === "overall" ? (
-                                <td className="px-4 py-4 text-left">
-                                  <Badge variant="outline" className="bg-slate-50 text-[10px] font-bold border-slate-200">
-                                    {r.topPreference ?? "—"}
-                                  </Badge>
-                                </td>
-                              ) : (
-                                <>
-                                  <td className="px-4 py-4 text-center font-bold text-indigo-600 font-mono">
-                                    {r.specialityRank ? `#${r.specialityRank}` : "—"}
-                                  </td>
-                                  <td className="px-4 py-4 text-center text-xs text-slate-500 font-mono">
-                                    {r.segmentRank ? `#${r.segmentRank}` : "—"}
-                                  </td>
-                                </>
-                              )}
+                              <td className="px-4 py-4 text-center font-bold text-indigo-600 font-mono">
+                                {r.specialityRank ? `#${r.specialityRank}` : "—"}
+                              </td>
+                              <td className="px-4 py-4 text-center text-xs text-slate-500 font-mono">
+                                {r.segmentRank ? `#${r.segmentRank}` : "—"}
+                              </td>
 
                               <td className="px-4 py-4 text-left">
                                 {r.preferredLocations && r.preferredLocations.length > 0 ? (

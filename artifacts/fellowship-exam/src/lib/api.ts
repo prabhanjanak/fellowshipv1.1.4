@@ -70,7 +70,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(res.status, body);
   }
-  return res.json() as Promise<T>;
+  // Safely parse JSON — guard against empty bodies (e.g. from proxied 204/304 responses)
+  const text = await res.text().catch(() => "");
+  if (!text || text.trim() === "") return null as unknown as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null as unknown as T;
+  }
 }
 
 export const api = {

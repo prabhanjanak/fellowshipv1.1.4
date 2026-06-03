@@ -97,7 +97,13 @@ router.post("/panels",
         `);
       }
     }
-    res.status(201).json((await getPanels((req as any).isMockMode)).find((p) => p.id === panel!["id"]));
+    const allPanels = await getPanels((req as any).isMockMode);
+    const created = allPanels.find((p) => String(p.id) === String(panel!["id"])) ?? {
+      id: panel!["id"], name, roomNumber, specialityId: specialityId ?? null,
+      isMindMatter: isMindMatter ?? false, isActive: true, programId: programId ?? null,
+      createdAt: new Date().toISOString(), members: [],
+    };
+    res.status(201).json(created);
   }
 );
 
@@ -120,7 +126,9 @@ router.patch("/panels/:id",
     if (parts.length) {
       await db.execute(sql.raw(`UPDATE interview_panels SET ${parts.join(", ")} WHERE id = ${id}`));
     }
-    res.json((await getPanels((req as any).isMockMode)).find((p) => p.id === id) ?? { error: "Not found" });
+    const allPanels = await getPanels((req as any).isMockMode);
+    const updated = allPanels.find((p) => String(p.id) === String(id)) ?? { error: "Not found" };
+    res.json(updated);
   }
 );
 
@@ -363,6 +371,84 @@ router.delete("/panels/:id/queue/:candidateId",
     } catch (err: any) {
       logger.error({ err }, "Failed to remove from queue");
       res.status(500).json({ error: err.message || "Failed to remove from queue" });
+    }
+  }
+);
+
+// POST /panels/:id/queue/auto-assign — Auto-assign all matching candidates to queue (sorted A-Z by first name)
+router.post("/panels/:id/queue/auto-assign",
+  requireAuth,
+  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
+  async (req, res) => {
+    const panelId = Number(req.params["id"]);
+    try {
+      // Get panel's speciality
+      const [panelRow] = (await db.execute(sql`
+        SELECT speciality_id, is_mind_matter FROM interview_panels WHERE id = ${panelId}
+      `)).rows as Array<Record<string, unknown>>;
+
+      if (!panelRow) return res.status(404).json({ error: "Panel not found" });
+
+      const specId = panelRow["speciality_id"] ? Number(panelRow["speciality_id"]) : null;
+
+      // Get candidates already in queue (not done) to avoid duplicates
+      const existingQueue = (await db.execute(sql`
+        SELECT candidate_id FROM panel_queue WHERE panel_id = ${panelId} AND status != 'done'
+      `)).rows as Array<Record<string, unknown>>;
+      const existingIds = new Set(existingQueue.map(r => Number(r["candidate_id"])));
+
+      // Find all matching candidates
+      let matchingCandidates: Array<{ id: number; fullName: string }>;
+      
+      if (!specId) {
+        // General panel: get all candidates
+        matchingCandidates = (await db.execute(sql`
+          SELECT id, full_name FROM candidates WHERE is_mock = FALSE ORDER BY full_name ASC
+        `)).rows as Array<{ id: number; fullName: string }>;
+        matchingCandidates = matchingCandidates.map(r => ({ id: Number((r as any).id), fullName: String((r as any).full_name) }));
+      } else {
+        // Speciality-mapped panel: get candidates who applied for this speciality
+        const matchRows = (await db.execute(sql`
+          SELECT DISTINCT c.id, c.full_name
+          FROM candidates c
+          WHERE c.is_mock = FALSE
+            AND (
+              EXISTS (
+                SELECT 1 FROM candidate_preferences cp 
+                WHERE cp.candidate_id = c.id AND cp.speciality_id = ${specId}
+              )
+              OR EXISTS (
+                SELECT 1 FROM applications a 
+                WHERE a.candidate_id = c.id AND a.speciality_id = ${specId}
+              )
+            )
+          ORDER BY c.full_name ASC
+        `)).rows as Array<Record<string, unknown>>;
+        matchingCandidates = matchRows.map(r => ({ id: Number(r["id"]), fullName: String(r["full_name"]) }));
+      }
+
+      // Get current max queue position
+      const [maxRow] = (await db.execute(sql`
+        SELECT COALESCE(MAX(queue_position), -1) as max_pos FROM panel_queue WHERE panel_id = ${panelId}
+      `)).rows as Array<Record<string, unknown>>;
+      let nextPos = Number(maxRow!["max_pos"]) + 1;
+
+      let added = 0;
+      for (const cand of matchingCandidates) {
+        if (existingIds.has(cand.id)) continue;
+        await db.execute(sql`
+          INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status, called_at)
+          VALUES (${panelId}, ${cand.id}, ${nextPos}, 'waiting', NULL)
+          ON CONFLICT (panel_id, candidate_id) DO NOTHING
+        `);
+        nextPos++;
+        added++;
+      }
+
+      res.json({ success: true, added });
+    } catch (err: any) {
+      logger.error({ err }, "Auto-assign failed");
+      res.status(500).json({ error: err.message || "Failed to auto-assign" });
     }
   }
 );
@@ -628,6 +714,29 @@ router.get("/panel/live", requireAuth, requireRole("central_exam_coordinator", "
     currentCandidateId: r["current_candidate_id"], currentCandidateName: r["current_candidate_name"],
     currentCandidateCode: r["current_candidate_code"], updatedAt: r["updated_at"],
   })));
+});
+
+router.patch("/panel/status/:doctorId", requireAuth, requireRole("central_exam_coordinator", "super_admin", "program_admin"), async (req, res) => {
+  const doctorId = Number(req.params.doctorId);
+  const { isEngaged, candidateId } = req.body as { isEngaged: boolean; candidateId?: number | null };
+  await db.execute(sql`INSERT INTO doctor_panel_status (doctor_id) VALUES (${doctorId}) ON CONFLICT (doctor_id) DO NOTHING`);
+  if (isEngaged) {
+    await db.execute(sql`
+      UPDATE doctor_panel_status SET is_engaged = true, engaged_since = now(), current_candidate_id = ${candidateId ?? null}, updated_at = now()
+      WHERE doctor_id = ${doctorId}
+    `);
+  } else {
+    await db.execute(sql`
+      UPDATE doctor_panel_status SET is_engaged = false, engaged_since = null, current_candidate_id = null, updated_at = now()
+      WHERE doctor_id = ${doctorId}
+    `);
+  }
+  const [row] = (await db.execute(sql`
+    SELECT dps.*, c.full_name as candidate_name
+    FROM doctor_panel_status dps LEFT JOIN candidates c ON c.id = dps.current_candidate_id
+    WHERE dps.doctor_id = ${doctorId}
+  `)).rows;
+  res.json({ doctorId, isEngaged: (row as Record<string, unknown>)["is_engaged"], currentCandidateId: (row as Record<string, unknown>)["current_candidate_id"], currentCandidateName: (row as Record<string, unknown>)["candidate_name"] });
 });
 
 router.patch("/panel/status", requireAuth, requireRole("doctor"), async (req, res) => {

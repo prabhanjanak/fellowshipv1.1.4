@@ -109,11 +109,81 @@ router.get("/interviews/scores", requireAuth, requireRole("super_admin", "progra
       doctorId: s.doctorId,
       doctorName: doc?.fullName ?? `#${s.doctorId}`,
       score: s.score,
+      specialityId: s.specialityId,
       totalMarks: batch?.interviewTotalMarks ?? 100,
       remarks: s.remarks,
       submittedAt: s.submittedAt.toISOString(),
     };
   }));
+});
+
+// Admin: update an individual score entry
+router.patch("/interviews/scores/:scoreId", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const scoreId = Number(req.params.scoreId);
+    const { score, remarks } = req.body as { score: number; remarks?: string };
+    if (score == null || isNaN(score)) {
+      res.status(400).json({ error: "Score is required" });
+      return;
+    }
+
+    const [existingScore] = await db.select().from(interviewScoresTable).where(eq(interviewScoresTable.id, scoreId));
+    if (!existingScore) {
+      res.status(404).json({ error: "Score not found" });
+      return;
+    }
+
+    let maxScore = 50;
+    if (existingScore.specialityId) {
+      const panelQuery = await db.execute(sql`
+        SELECT ip.is_mind_matter
+        FROM interview_panel_members ipm
+        JOIN interview_panels ip ON ip.id = ipm.panel_id
+        WHERE ipm.doctor_id = ${existingScore.doctorId} AND ip.speciality_id = ${existingScore.specialityId}
+        LIMIT 1
+      `);
+      const isMindMatter = (panelQuery.rows[0] as { is_mind_matter: boolean } | undefined)?.is_mind_matter;
+      if (isMindMatter) maxScore = 10;
+    }
+
+    if (score < 0 || score > maxScore) {
+      res.status(400).json({ error: `Score must be between 0 and ${maxScore}` });
+      return;
+    }
+
+    const [updated] = await db.update(interviewScoresTable)
+      .set({ score, remarks: remarks ?? null, submittedAt: new Date() })
+      .where(eq(interviewScoresTable.id, scoreId))
+      .returning();
+
+    const { recalculateCandidateStatus } = await import("./candidates");
+    await recalculateCandidateStatus(existingScore.candidateId);
+
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: delete an individual score entry
+router.delete("/interviews/scores/:scoreId", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const scoreId = Number(req.params.scoreId);
+    const [existingScore] = await db.select().from(interviewScoresTable).where(eq(interviewScoresTable.id, scoreId));
+    if (!existingScore) {
+      res.status(404).json({ error: "Score not found" });
+      return;
+    }
+
+    await db.delete(interviewScoresTable).where(eq(interviewScoresTable.id, scoreId));
+
+    const { recalculateCandidateStatus } = await import("./candidates");
+    await recalculateCandidateStatus(existingScore.candidateId);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Admin: get all doctor assignments (for management panel)
@@ -216,22 +286,23 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
 
   // 1. Identify active panel and its speciality
   const panelQuery = await db.execute(sql`
-    SELECT ip.speciality_id, ip.id as panel_id
+    SELECT ip.speciality_id, ip.id as panel_id, ip.is_mind_matter
     FROM interview_panel_members ipm
     JOIN interview_panels ip ON ip.id = ipm.panel_id
     WHERE ipm.doctor_id = ${userId} AND ip.is_active = TRUE
     LIMIT 1
   `);
-  const activePanel = panelQuery.rows[0] as { speciality_id: number | null; panel_id: number } | undefined;
+  const activePanel = panelQuery.rows[0] as { speciality_id: number | null; panel_id: number; is_mind_matter: boolean } | undefined;
   if (!activePanel) {
     return res.status(403).json({ error: "Access denied. Doctor is not currently active in any panel." });
   }
   const specialityId = activePanel.speciality_id;
   const panelId = activePanel.panel_id;
 
-  // 2. Validate score ceiling of 50 marks
-  if (score < 0 || score > 50) {
-    return res.status(400).json({ error: "Clinical VIVA score must be between 0 and 50 marks." });
+  // 2. Validate score ceiling based on Mind Matter configuration
+  const maxScore = activePanel.is_mind_matter ? 10 : 50;
+  if (score < 0 || score > maxScore) {
+    return res.status(400).json({ error: `Score must be between 0 and ${maxScore} marks.` });
   }
 
   const existing = await db.select().from(interviewScoresTable).where(
@@ -515,10 +586,20 @@ router.get("/interviews/scores/export", requireAuth, requireRole("super_admin", 
     const allBatchCand = await db.select().from(batchCandidatesTable);
     const allScores = await db.select().from(interviewScoresTable);
     const allDoctors = await db.select().from(usersTable).where(eq(usersTable.role, "doctor"));
-    const allApps = await db.select().from(applicationsTable);
-
-    const panelQuery = await db.execute(sql`SELECT id, name, room_number, speciality_id FROM interview_panels`);
+    const allApps = await db.select().from(applicationsTable);    const panelQuery = await db.execute(sql`
+      SELECT ip.id, ip.name, ip.room_number, ip.speciality_id, ip.is_mind_matter, ipm.doctor_id
+      FROM interview_panels ip
+      LEFT JOIN interview_panel_members ipm ON ip.id = ipm.panel_id
+    `);
     const allPanels = panelQuery.rows as Array<Record<string, any>>;
+
+    const isMindMatterScore = (s: { doctorId: number; specialityId: number | null }) => {
+      return allPanels.some(p => 
+        p.speciality_id === s.specialityId && 
+        p.doctor_id === s.doctorId && 
+        p.is_mind_matter === true
+      );
+    };
 
     let filteredCandidates = candidates;
     if (specId !== undefined) {
@@ -552,16 +633,18 @@ router.get("/interviews/scores/export", requireAuth, requireRole("super_admin", 
 
       for (const spec of candidateSpecs) {
         const candScores = allScores.filter(s => s.candidateId === c.id && (spec.id ? s.specialityId === spec.id : true));
-        const sortedCandScores = [...candScores].sort((a, b) => a.doctorId - b.doctorId);
+        const vivaScores = candScores.filter(s => !isMindMatterScore(s));
+        const mmScores = candScores.filter(s => isMindMatterScore(s));
         
-        const doc1 = sortedCandScores[0]?.score ?? "—";
-        const doc2 = sortedCandScores[1]?.score ?? "—";
-        const doc3 = sortedCandScores[2]?.score ?? "—";
-        const doc4 = sortedCandScores[3]?.score ?? "—";
+        const sortedVivaScores = [...vivaScores].sort((a, b) => a.doctorId - b.doctorId);
+        
+        const doc1 = sortedVivaScores[0]?.score ?? "—";
+        const doc2 = sortedVivaScores[1]?.score ?? "—";
+        const doc3 = sortedVivaScores[2]?.score ?? "—";
+        const doc4 = sortedVivaScores[3]?.score ?? "—";
 
-        const docScores = candScores.map(s => s.score);
-        const avgVivaScore = docScores.length > 0 
-          ? docScores.reduce((acc, val) => acc + val, 0) / docScores.length
+        const avgVivaScore = vivaScores.length > 0 
+          ? vivaScores.reduce((acc, val) => acc + val.score, 0) / vivaScores.length
           : null;
 
         const candidateBatchCands = allBatchCand.filter((bc) => bc.candidateId === c.id);
@@ -569,8 +652,13 @@ router.get("/interviews/scores/export", requireAuth, requireRole("super_admin", 
         const rawMcq = bcRow?.mcqScore ?? (c.mcqScore ? Number(c.mcqScore) : null);
         const mcqScore = rawMcq != null ? Number(rawMcq) : null;
         
-        const rawPsy = bcRow?.psychometricScore ?? (c.psychometricScore ? Number(c.psychometricScore) : null);
-        const psychometricScore = rawPsy != null ? Number(rawPsy) : null;
+        const avgMindMatter = mmScores.length > 0
+          ? mmScores.reduce((acc, val) => acc + val.score, 0) / mmScores.length
+          : null;
+
+        const psychometricScore = avgMindMatter !== null
+          ? avgMindMatter
+          : (bcRow?.psychometricScore ?? (c.psychometricScore ? Number(c.psychometricScore) : null));
 
         const totalScore = (mcqScore != null || avgVivaScore != null || psychometricScore != null)
           ? (mcqScore ?? 0) + (avgVivaScore ?? 0) + (psychometricScore ?? 0)
@@ -672,6 +760,21 @@ router.get("/interviews/scores/specialty-export", requireAuth, requireRole("supe
     const allPrefs = await db.select().from(candidatePreferencesTable);
     const allSubmissions = await db.select().from(applicationSubmissionsTable);
 
+    const panelQuery = await db.execute(sql`
+      SELECT ip.id, ip.name, ip.room_number, ip.speciality_id, ip.is_mind_matter, ipm.doctor_id
+      FROM interview_panels ip
+      LEFT JOIN interview_panel_members ipm ON ip.id = ipm.panel_id
+    `);
+    const allPanels = panelQuery.rows as Array<Record<string, any>>;
+
+    const isMindMatterScore = (s: { doctorId: number; specialityId: number | null }) => {
+      return allPanels.some(p => 
+        p.speciality_id === s.specialityId && 
+        p.doctor_id === s.doctorId && 
+        p.is_mind_matter === true
+      );
+    };
+
     const addAutoFilter = (ws: XLSX.WorkSheet) => {
       if (!ws["!ref"]) return;
       try {
@@ -689,22 +792,36 @@ router.get("/interviews/scores/specialty-export", requireAuth, requireRole("supe
 
       const specCandidates = candidates.filter(c => specCandIds.has(c.id));
       const specScores = allScores.filter(s => s.specialityId === spec.id);
+      
+      const specVivaScores = specScores.filter(s => !isMindMatterScore(s));
+      const specMmScores = specScores.filter(s => isMindMatterScore(s));
 
       const mcqScores = specCandidates.map(c => c.mcqScore ? Number(c.mcqScore) : null).filter(v => v !== null) as number[];
-      const mindScores = specCandidates.map(c => c.psychometricScore ? Number(c.psychometricScore) : null).filter(v => v !== null) as number[];
-      const vivaScores = specScores.map(s => s.score);
+      
+      const mindScores = specCandidates.map(c => {
+        const candMmScores = specMmScores.filter(s => s.candidateId === c.id);
+        if (candMmScores.length > 0) {
+          return candMmScores.reduce((acc, s) => acc + s.score, 0) / candMmScores.length;
+        }
+        return c.psychometricScore ? Number(c.psychometricScore) : null;
+      }).filter(v => v !== null) as number[];
+
+      const vivaScores = specVivaScores.map(s => s.score);
 
       const avg = (arr: number[]) => arr.length > 0 ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 10) / 10 : null;
 
       const vivaByCandidate = specCandidates.map(c => {
-        const cs = specScores.filter(s => s.candidateId === c.id);
+        const cs = specVivaScores.filter(s => s.candidateId === c.id);
         return cs.length > 0 ? cs.reduce((a, s) => a + s.score, 0) / cs.length : null;
       }).filter(v => v !== null) as number[];
 
       const avgTotal = specCandidates.map(c => {
         const mcq = c.mcqScore ? Number(c.mcqScore) : 0;
-        const mm = c.psychometricScore ? Number(c.psychometricScore) : 0;
-        const cs = specScores.filter(s => s.candidateId === c.id);
+        const candMmScores = specMmScores.filter(s => s.candidateId === c.id);
+        const mm = candMmScores.length > 0 
+          ? candMmScores.reduce((acc, s) => acc + s.score, 0) / candMmScores.length 
+          : (c.psychometricScore ? Number(c.psychometricScore) : 0);
+        const cs = specVivaScores.filter(s => s.candidateId === c.id);
         const viva = cs.length > 0 ? cs.reduce((a, s) => a + s.score, 0) / cs.length : 0;
         return mcq + mm + viva;
       });
@@ -713,7 +830,7 @@ router.get("/interviews/scores/specialty-export", requireAuth, requireRole("supe
         "Specialty": spec.name,
         "Code": spec.code,
         "Total Candidates": specCandidates.length,
-        "VIVA Evaluated": new Set(specScores.map(s => s.candidateId)).size,
+        "VIVA Evaluated": new Set(specVivaScores.map(s => s.candidateId)).size,
         "Avg MCQ (Max 50)": avg(mcqScores) ?? "—",
         "Avg VIVA (Max 50)": avg(vivaScores) ?? "—",
         "Avg Mind Matter (Max 10)": avg(mindScores) ?? "—",
@@ -729,15 +846,23 @@ router.get("/interviews/scores/specialty-export", requireAuth, requireRole("supe
       allPrefs.filter(p => p.specialityId === spec.id).forEach(p => specCandIds.add(p.candidateId));
       const specCandidates = candidates.filter(c => specCandIds.has(c.id));
       const specScores = allScores.filter(s => s.specialityId === spec.id);
+      
+      const specVivaScores = specScores.filter(s => !isMindMatterScore(s));
+      const specMmScores = specScores.filter(s => isMindMatterScore(s));
 
-      // Get unique doctors who scored for this specialty, up to 4
-      const doctorIdsForSpec = [...new Set(specScores.map(s => s.doctorId))].slice(0, 4);
+      // Get unique doctors who scored VIVA for this specialty, up to 4
+      const doctorIdsForSpec = [...new Set(specVivaScores.map(s => s.doctorId))].slice(0, 4);
 
       for (const c of specCandidates) {
-        const candScores = specScores.filter(s => s.candidateId === c.id);
+        const candScores = specVivaScores.filter(s => s.candidateId === c.id);
         const avgViva = candScores.length > 0 ? candScores.reduce((a, s) => a + s.score, 0) / candScores.length : null;
+        
+        const candMmScores = specMmScores.filter(s => s.candidateId === c.id);
+        const mm = candMmScores.length > 0 
+          ? candMmScores.reduce((acc, s) => acc + s.score, 0) / candMmScores.length 
+          : (c.psychometricScore ? Number(c.psychometricScore) : null);
+          
         const mcq = c.mcqScore ? Number(c.mcqScore) : null;
-        const mm = c.psychometricScore ? Number(c.psychometricScore) : null;
         const total = (mcq ?? 0) + (avgViva ?? 0) + (mm ?? 0);
 
         const row: Record<string, any> = {

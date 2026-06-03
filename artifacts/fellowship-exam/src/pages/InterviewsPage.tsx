@@ -40,6 +40,7 @@ interface Candidate {
 interface ScoreEntry {
   id: number; candidateId: number; candidateName: string; candidateCode: string;
   doctorId: number; doctorName: string; score: number; remarks: string | null; submittedAt: string; totalMarks?: number;
+  specialityId?: number | null;
 }
 
 interface DoctorAssignment {
@@ -65,6 +66,7 @@ interface Panel {
   id: number; name: string; roomNumber: string; programId: number | null;
   specialityId?: number | null;
   isActive: boolean; createdAt: string; members: PanelMember[];
+  isMindMatter?: boolean;
 }
 
 interface QueueEntry {
@@ -790,6 +792,11 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
   const [assignScheduled, setAssignScheduled] = useState("");
   const [candidateSearch, setCandidateSearch] = useState("");
 
+  // Dialogue state for score edits
+  const [editingScoreEntry, setEditingScoreEntry] = useState<ScoreEntry | null>(null);
+  const [editScoreValue, setEditScoreValue] = useState("");
+  const [editScoreRemarks, setEditScoreRemarks] = useState("");
+
   const { data: livePanel = [], isLoading: liveLoading } = useQuery<PanelEntry[]>({
     queryKey: ["panel-live"],
     queryFn: () => api.get<PanelEntry[]>("/panel/live"),
@@ -819,6 +826,12 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
     refetchInterval: 3000,
   });
 
+  const { data: panels = [], isLoading: panelsLoading } = useQuery<Panel[]>({
+    queryKey: ["panels"],
+    queryFn: () => api.get<Panel[]>("/panels"),
+    refetchInterval: 3000,
+  });
+
   const assignMutation = useMutation({
     mutationFn: (body: { doctorId: number; candidateId: number; scheduledAt?: string }) =>
       api.post("/interviews/assign", body),
@@ -835,6 +848,67 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
     onSuccess: () => { toast({ title: "Assignment removed" }); qc.invalidateQueries({ queryKey: ["doctor-assignments-admin"] }); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const toggleDoctorStatusMutation = useMutation({
+    mutationFn: ({ doctorId, isEngaged }: { doctorId: number; isEngaged: boolean }) =>
+      api.patch(`/panel/status/${doctorId}`, { isEngaged }),
+    onSuccess: () => {
+      toast({ title: "Doctor status updated" });
+      qc.invalidateQueries({ queryKey: ["panel-live"] });
+      qc.invalidateQueries({ queryKey: ["panels"] });
+      qc.invalidateQueries({ queryKey: ["display-live"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateQueueStatusMutation = useMutation({
+    mutationFn: ({ panelId, candidateId, status }: { panelId: number; candidateId: number; status: string }) =>
+      api.patch(`/panels/${panelId}/queue/${candidateId}`, { status }),
+    onSuccess: () => {
+      toast({ title: "Queue status updated" });
+      qc.invalidateQueries({ queryKey: ["panel-live"] });
+      qc.invalidateQueries({ queryKey: ["panels"] });
+      qc.invalidateQueries({ queryKey: ["display-live"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteScoreMutation = useMutation({
+    mutationFn: (scoreId: number) =>
+      api.delete(`/interviews/scores/${scoreId}`),
+    onSuccess: () => {
+      toast({ title: "Score deleted successfully" });
+      qc.invalidateQueries({ queryKey: ["interview-scores"] });
+      qc.invalidateQueries({ queryKey: ["candidates"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateScoreMutation = useMutation({
+    mutationFn: ({ scoreId, score, remarks }: { scoreId: number; score: number; remarks: string }) =>
+      api.patch(`/interviews/scores/${scoreId}`, { score, remarks }),
+    onSuccess: () => {
+      toast({ title: "Score updated successfully" });
+      qc.invalidateQueries({ queryKey: ["interview-scores"] });
+      qc.invalidateQueries({ queryKey: ["candidates"] });
+      setEditingScoreEntry(null);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const handleCallNext = async (panelId: number) => {
+    try {
+      const queue = await api.get<QueueEntry[]>(`/panels/${panelId}/queue`);
+      const nextCand = queue.find(q => q.status === "waiting");
+      if (nextCand) {
+        updateQueueStatusMutation.mutate({ panelId, candidateId: nextCand.candidateId, status: "in_progress" });
+      } else {
+        toast({ title: "Queue Empty", description: "No candidates waiting in this panel's queue." });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
 
   const filteredCandidates = candidates.filter((c) =>
     !candidateSearch || c.fullName.toLowerCase().includes(candidateSearch.toLowerCase()) || c.candidateCode.toLowerCase().includes(candidateSearch.toLowerCase())
@@ -883,7 +957,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
 
       {/* ── INTERVIEW PANELS ── */}
       {activeTab === "panels" && (
-        <PanelsTab toast={toast} qc={qc} candidates={candidates} specialities={specialities} />
+        <PanelsTab toast={toast} qc={qc} candidates={candidates} specialities={specialities} panels={panels} panelsLoading={panelsLoading} />
       )}
 
       {/* ── LIVE STATUS ── */}
@@ -909,29 +983,80 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
             <div className="text-center py-16"><Activity className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" /><p className="text-muted-foreground">No panel doctors configured</p></div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {livePanel.map((d) => (
-                <Card key={d.doctorId} className={`border-2 transition-all duration-500 ${d.isEngaged ? "border-red-300 bg-red-50/60 dark:bg-red-950/20 dark:border-red-700" : "border-green-300 bg-green-50/60 dark:bg-green-950/20 dark:border-green-700"}`}>
-                  <CardContent className="p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-sm">{d.doctorName}</p>
-                        {d.unitName && <p className="text-[11px] text-muted-foreground">{d.unitName}</p>}
+              {livePanel.map((d) => {
+                const panel = panels.find(p => p.members.some(m => m.doctorId === d.doctorId));
+                return (
+                  <Card key={d.doctorId} className={`border-2 transition-all duration-500 ${d.isEngaged ? "border-red-300 bg-red-50/60 dark:bg-red-950/20 dark:border-red-700" : "border-green-300 bg-green-50/60 dark:bg-green-950/20 dark:border-green-700"}`}>
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-sm">{d.doctorName}</p>
+                          {d.unitName && <p className="text-[11px] text-muted-foreground">{d.unitName}</p>}
+                          {panel && (
+                            <p className="text-[10px] text-indigo-600 font-extrabold uppercase tracking-wider mt-0.5">
+                              Panel: {panel.name} · Room {panel.roomNumber}
+                            </p>
+                          )}
+                        </div>
+                        <div className="shrink-0">
+                          <Select 
+                            value={d.isEngaged ? "engaged" : "free"} 
+                            onValueChange={(val) => toggleDoctorStatusMutation.mutate({ doctorId: d.doctorId, isEngaged: val === "engaged" })}
+                            disabled={toggleDoctorStatusMutation.isPending}
+                          >
+                            <SelectTrigger className={`h-8 w-28 text-xs font-bold rounded-full border-none transition-all shadow-sm flex items-center justify-between gap-2 px-3 py-1 cursor-pointer ${
+                              d.isEngaged 
+                                ? "bg-red-100 text-red-700 hover:bg-red-200 focus:ring-red-400" 
+                                : "bg-green-100 text-green-700 hover:bg-green-200 focus:ring-green-400"
+                            }`}>
+                              <div className="flex items-center gap-1.5">
+                                <div className={`h-1.5 w-1.5 rounded-full ${d.isEngaged ? "bg-red-500 animate-pulse" : "bg-green-500"}`} />
+                                <span>{d.isEngaged ? "Engaged" : "Free"}</span>
+                              </div>
+                            </SelectTrigger>
+                            <SelectContent className="rounded-xl">
+                              <SelectItem value="free" className="text-xs font-semibold text-green-700 hover:bg-green-50 cursor-pointer">Free</SelectItem>
+                              <SelectItem value="engaged" className="text-xs font-semibold text-red-700 hover:bg-red-50 cursor-pointer">Engaged</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
-                      <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold ${d.isEngaged ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300" : "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"}`}>
-                        <div className={`h-2 w-2 rounded-full ${d.isEngaged ? "bg-red-500 animate-pulse" : "bg-green-500"}`} />
-                        {d.isEngaged ? "Engaged" : "Free"}
-                      </div>
-                    </div>
-                    {d.isEngaged && d.currentCandidateName && (
-                      <div className="rounded-lg bg-background/70 border p-2.5 space-y-1">
-                        <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Current Candidate</p>
-                        <p className="text-sm font-semibold">{d.currentCandidateName}</p>
-                        {d.currentCandidateCode && <p className="text-xs font-mono text-muted-foreground">{d.currentCandidateCode}</p>}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
+                      {d.isEngaged && d.currentCandidateName && (
+                        <div className="rounded-lg bg-background/70 border p-2.5 space-y-1">
+                          <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Current Candidate</p>
+                          <p className="text-sm font-semibold">{d.currentCandidateName}</p>
+                          {d.currentCandidateCode && <p className="text-xs font-mono text-muted-foreground">{d.currentCandidateCode}</p>}
+                          {panel && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={updateQueueStatusMutation.isPending}
+                              onClick={() => {
+                                if (d.currentCandidateId) {
+                                  updateQueueStatusMutation.mutate({ panelId: panel.id, candidateId: d.currentCandidateId, status: "done" });
+                                }
+                              }}
+                              className="h-8 w-full mt-2 border-red-205 text-red-700 hover:bg-red-50 hover:border-red-300 font-bold rounded-xl text-xs uppercase"
+                            >
+                              Mark Candidate Done
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {!d.isEngaged && panel && (
+                        <Button
+                          size="sm"
+                          disabled={updateQueueStatusMutation.isPending}
+                          onClick={() => handleCallNext(panel.id)}
+                          className="h-8 w-full bg-slate-900 hover:bg-indigo-750 text-white font-bold rounded-xl text-xs uppercase tracking-wider"
+                        >
+                          Call Next Candidate
+                        </Button>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
           <p className="text-center text-xs text-muted-foreground">Auto-refreshes every 4 seconds</p>
@@ -940,7 +1065,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
 
       {/* ── MARK SHEET TAB ── */}
       {activeTab === "marksheet" && (
-        <MarkSheetTab specialities={specialities} candidates={candidates} scores={scores} isCEC={isCEC} toast={toast} doctors={doctors} />
+        <MarkSheetTab specialities={specialities} candidates={candidates} scores={scores} isCEC={isCEC} toast={toast} doctors={doctors} panels={panels} />
       )}
 
       {/* ── SCORES ── */}
@@ -960,7 +1085,8 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                   <thead className="border-b bg-muted/40">
                     <tr>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Candidate</th>
-                      <th className="text-center px-4 py-3 font-medium text-muted-foreground">Avg. Score</th>
+                      <th className="text-center px-4 py-3 font-medium text-muted-foreground">Avg. VIVA Score</th>
+                      <th className="text-center px-4 py-3 font-medium text-muted-foreground">Avg. Mind Matter Score</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground">Doctor Breakdown</th>
                       <th className="text-right px-4 py-3 font-medium text-muted-foreground">Last Updated</th>
                     </tr>
@@ -975,8 +1101,26 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                         grouped[s.candidateId]!.scores.push(s);
                       });
 
+                      const isMindMatterScore = (s: ScoreEntry) => {
+                        return panels.some(p => 
+                          p.specialityId === s.specialityId && 
+                          p.members.some(m => m.doctorId === s.doctorId) && 
+                          (p as any).isMindMatter === true
+                        );
+                      };
+
                       return Object.entries(grouped).map(([cid, data]) => {
-                        const avg = data.scores.reduce((acc, s) => acc + s.score, 0) / data.scores.length;
+                        const vivaScores = data.scores.filter(s => !isMindMatterScore(s));
+                        const mmScores = data.scores.filter(s => isMindMatterScore(s));
+
+                        const avgViva = vivaScores.length > 0
+                          ? vivaScores.reduce((acc, s) => acc + s.score, 0) / vivaScores.length
+                          : null;
+
+                        const avgMM = mmScores.length > 0
+                          ? mmScores.reduce((acc, s) => acc + s.score, 0) / mmScores.length
+                          : null;
+
                         const lastDate = new Date(Math.max(...data.scores.map(s => new Date(s.submittedAt).getTime())));
                         
                         return (
@@ -987,25 +1131,63 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                             </td>
                             <td className="px-4 py-3 text-center">
                               <div className="flex flex-col items-center">
-                                <span className="text-lg font-bold text-primary">{avg.toFixed(1)}</span>
-                                <span className="text-[10px] text-muted-foreground">out of {data.total}</span>
+                                <span className="text-lg font-bold text-indigo-650">{avgViva !== null ? avgViva.toFixed(1) : "—"}</span>
+                                <span className="text-[10px] text-muted-foreground">out of 50</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <div className="flex flex-col items-center">
+                                <span className="text-lg font-bold text-amber-600">{avgMM !== null ? avgMM.toFixed(1) : "—"}</span>
+                                <span className="text-[10px] text-muted-foreground">out of 10</span>
                               </div>
                             </td>
                             <td className="px-4 py-3">
-                              <div className="space-y-1.5">
-                                {data.scores.map((s) => (
-                                  <div key={s.id} className="flex items-center gap-2">
-                                    <Badge variant="outline" className="h-5 px-1.5 font-mono text-[10px] bg-background">
-                                      {s.score}
-                                    </Badge>
-                                    <span className="text-xs font-medium text-muted-foreground">{s.doctorName}</span>
-                                    {s.remarks && (
-                                      <span className="text-[10px] italic text-muted-foreground truncate max-w-[150px]" title={s.remarks}>
-                                        — "{s.remarks}"
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
+                              <div className="space-y-1.5 max-w-[450px]">
+                                {data.scores.map((s) => {
+                                  const isMM = isMindMatterScore(s);
+                                  return (
+                                    <div key={s.id} className="flex items-center justify-between gap-3 bg-slate-50/50 hover:bg-slate-100/80 p-1.5 rounded-lg border border-slate-100">
+                                      <div className="flex items-center gap-2">
+                                        <Badge variant="outline" className={`h-5 px-1.5 font-mono text-[10px] bg-background font-bold ${isMM ? 'text-amber-700 border-amber-300 bg-amber-50' : 'text-indigo-700 border-indigo-300 bg-indigo-50'}`}>
+                                          {s.score} / {isMM ? 10 : 50}
+                                        </Badge>
+                                        <span className="text-xs font-bold text-slate-700">{s.doctorName}</span>
+                                        <span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400">
+                                          ({isMM ? 'Mind Matter' : 'VIVA'})
+                                        </span>
+                                        {s.remarks && (
+                                          <span className="text-[10px] italic text-muted-foreground truncate max-w-[120px]" title={s.remarks}>
+                                            — "{s.remarks}"
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        <button
+                                          onClick={() => {
+                                            setEditingScoreEntry(s);
+                                            setEditScoreValue(String(s.score));
+                                            setEditScoreRemarks(s.remarks || "");
+                                          }}
+                                          className="text-xs hover:scale-115 transition-transform"
+                                          title="Edit score"
+                                        >
+                                          ✏️
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            if (window.confirm(`Are you sure you want to delete the score entered by ${s.doctorName} for ${data.name}?`)) {
+                                              deleteScoreMutation.mutate(s.id);
+                                            }
+                                          }}
+                                          className="text-xs hover:scale-115 transition-transform"
+                                          title="Delete score"
+                                        >
+                                          ❌
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right text-xs text-muted-foreground">
@@ -1024,6 +1206,75 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
           </CardContent>
         </Card>
       )}
+
+      {/* Edit Score Entry Dialog */}
+      <Dialog open={editingScoreEntry !== null} onOpenChange={(o) => { if (!o) setEditingScoreEntry(null); }}>
+        <DialogContent className="max-w-sm rounded-2xl bg-white p-6 shadow-xl border">
+          <DialogHeader><DialogTitle className="font-bold text-lg">Edit Score Entry</DialogTitle></DialogHeader>
+          {editingScoreEntry && (
+            <div className="space-y-4 pt-3">
+              <div className="bg-slate-50 p-3.5 rounded-xl text-xs space-y-1 border">
+                <p><strong>Candidate:</strong> {editingScoreEntry.candidateName} ({editingScoreEntry.candidateCode})</p>
+                <p><strong>Doctor Name:</strong> {editingScoreEntry.doctorName}</p>
+              </div>
+              <div className="space-y-2">
+                {(() => {
+                  const isMM = panels.some(p => p.specialityId === editingScoreEntry.specialityId && p.members.some(m => m.doctorId === editingScoreEntry.doctorId) && (p as any).isMindMatter === true);
+                  const maxVal = isMM ? 10 : 50;
+                  return (
+                    <>
+                      <Label className="text-xs font-bold text-slate-700">Score Value (Max {maxVal})</Label>
+                      <Input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        max={maxVal}
+                        className="h-10 border-2 rounded-xl focus:ring-indigo-500 font-bold font-mono text-sm"
+                        value={editScoreValue}
+                        onChange={(e) => setEditScoreValue(e.target.value)}
+                      />
+                    </>
+                  );
+                })()}
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-bold text-slate-700">Remarks</Label>
+                <textarea
+                  value={editScoreRemarks}
+                  onChange={(e) => setEditScoreRemarks(e.target.value)}
+                  className="w-full min-h-[85px] p-3 text-sm font-semibold border-2 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 border-input bg-background"
+                  placeholder="Consensus remarks..."
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="pt-3 border-t">
+            <Button variant="outline" className="rounded-xl h-10 text-xs font-bold" onClick={() => setEditingScoreEntry(null)}>Cancel</Button>
+            <Button
+              className="rounded-xl h-10 bg-slate-900 hover:bg-indigo-750 text-white font-bold text-xs uppercase"
+              disabled={updateScoreMutation.isPending}
+              onClick={() => {
+                if (editingScoreEntry) {
+                  const isMM = panels.some(p => p.specialityId === editingScoreEntry.specialityId && p.members.some(m => m.doctorId === editingScoreEntry.doctorId) && (p as any).isMindMatter === true);
+                  const maxVal = isMM ? 10 : 50;
+                  const val = parseFloat(editScoreValue);
+                  if (isNaN(val) || val < 0 || val > maxVal) {
+                    toast({ title: "Validation error", description: `Score must be between 0 and ${maxVal}`, variant: "destructive" });
+                    return;
+                  }
+                  updateScoreMutation.mutate({
+                    scoreId: editingScoreEntry.id,
+                    score: val,
+                    remarks: editScoreRemarks
+                  });
+                }
+              }}
+            >
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Assign Dialog */}
       <Dialog open={assignDoctorId != null} onOpenChange={(o) => { if (!o) { setAssignDoctorId(null); setAssignCandidateId(""); setAssignScheduled(""); setCandidateSearch(""); } }}>
@@ -1064,11 +1315,13 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
 }
 
 /* ─── Panels Tab ─── */
-function PanelsTab({ toast, qc, candidates, specialities }: {
+function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading }: {
   toast: ReturnType<typeof import("../hooks/use-toast").useToast>["toast"];
   qc: ReturnType<typeof useQueryClient>;
   candidates: Candidate[];
   specialities: { id: number; name: string; code: string }[];
+  panels: Panel[];
+  panelsLoading: boolean;
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
@@ -1091,11 +1344,7 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  const { data: panels = [], isLoading } = useQuery<Panel[]>({
-    queryKey: ["panels"],
-    queryFn: () => api.get<Panel[]>("/panels"),
-    refetchInterval: 3000,
-  });
+  const isLoading = panelsLoading;
 
 
   const { data: doctorUsers = [] } = useQuery<DoctorUser[]>({
@@ -1234,6 +1483,16 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const autoAssignMutation = useMutation({
+    mutationFn: (panelId: number) => api.post(`/panels/${panelId}/queue/auto-assign`, {}),
+    onSuccess: (data: any) => {
+      toast({ title: "Auto-assign complete", description: `${data?.added ?? 0} candidate(s) added to queue.` });
+      qc.invalidateQueries({ queryKey: ["panel-queue", selectedPanelId] });
+      qc.invalidateQueries({ queryKey: ["display-live"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const handleDrop = (fromIndex: number, toIndex: number) => {
     if (fromIndex === toIndex || !selectedPanel) return;
     const newQueue = [...waitingQueue];
@@ -1256,7 +1515,27 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
   }, [panels, selectedPanelId]);
 
   const selectedPanel = panels.find((p) => p.id === selectedPanelId);
-  const filteredCandidates = candidates.filter((c) =>
+
+  // Compute eligible candidates for selected panel (matching speciality), sorted A-Z by first name
+  const eligibleCandidates = (() => {
+    if (!selectedPanel) return [];
+    const specId = selectedPanel.specialityId ? Number(selectedPanel.specialityId) : null;
+    let filtered = candidates.filter((c) => {
+      if (!specId) return true; // General panel: all candidates eligible
+      const hasApp = (c as any).applications?.some((app: any) => Number(app.specialityId) === specId);
+      const hasPref = (c as any).preferences?.some((p: any) => Number(p.specialityId) === specId);
+      return hasApp || hasPref;
+    });
+    // Sort A-Z by first name (first token of full name)
+    filtered = [...filtered].sort((a, b) => {
+      const firstA = (a.fullName ?? "").split(" ")[0]!.toLowerCase();
+      const firstB = (b.fullName ?? "").split(" ")[0]!.toLowerCase();
+      return firstA.localeCompare(firstB);
+    });
+    return filtered;
+  })();
+
+  const filteredCandidates = eligibleCandidates.filter((c) =>
     !candSearch || c.fullName.toLowerCase().includes(candSearch.toLowerCase()) || c.candidateCode.toLowerCase().includes(candSearch.toLowerCase())
   );
 
@@ -1397,9 +1676,24 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm flex items-center justify-between">
                     <span className="flex items-center gap-2"><Users className="h-4 w-4" /> Interview Queue</span>
-                    <Badge variant="secondary" className="text-xs">
-                      {waitingQueue.length} waiting · {doneQueue.length} done
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">
+                        {waitingQueue.length} waiting · {doneQueue.length} done
+                      </Badge>
+                      {selectedPanel.specialityId && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[10px] gap-1 font-bold uppercase tracking-wider border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                          disabled={autoAssignMutation.isPending}
+                          onClick={() => selectedPanelId && autoAssignMutation.mutate(selectedPanelId)}
+                          title="Auto-add all matching candidates (A-Z) to queue"
+                        >
+                          {autoAssignMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
+                          Auto-assign All
+                        </Button>
+                      )}
+                    </div>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -1557,6 +1851,65 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
                   {waitingQueue.length === 0 && !currentCandidate && doneQueue.length === 0 && (
                     <div className="text-center py-4 text-sm text-muted-foreground flex items-center justify-center gap-2">
                       <Clock className="h-4 w-4" /> Queue is empty — add candidates above
+                    </div>
+                  )}
+
+                  {/* Eligible Candidates List (sorted A-Z) */}
+                  {eligibleCandidates.length > 0 && (
+                    <div className="pt-3 border-t space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                          {selectedPanel?.isMindMatter ? "Mind Matter — All Eligible Students (A-Z)" : "All Eligible Students (A-Z)"}
+                          <span className="ml-1.5 text-primary font-bold">({eligibleCandidates.length})</span>
+                        </p>
+                        {selectedPanel?.specialityId && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[9px] font-bold uppercase tracking-wider text-indigo-600 hover:bg-indigo-50 px-2"
+                            disabled={autoAssignMutation.isPending}
+                            onClick={() => selectedPanelId && autoAssignMutation.mutate(selectedPanelId)}
+                          >
+                            Add All to Queue
+                          </Button>
+                        )}
+                      </div>
+                      <div className="max-h-56 overflow-y-auto fancy-scrollbar space-y-1 rounded-lg border bg-muted/20 p-2">
+                        {eligibleCandidates.map((c, idx) => {
+                          const inQueue = panelQueue.some(q => q.candidateId === c.id && q.status !== "done");
+                          const isDone = panelQueue.some(q => q.candidateId === c.id && q.status === "done");
+                          return (
+                            <div key={c.id} className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-colors ${
+                              isDone ? "bg-emerald-50 border border-emerald-100" :
+                              inQueue ? "bg-indigo-50 border border-indigo-100" :
+                              "bg-background border border-border hover:bg-muted/40"
+                            }`}>
+                              <div className="flex items-center gap-2">
+                                <span className="w-5 text-center font-mono text-[10px] text-muted-foreground">{idx + 1}</span>
+                                <div>
+                                  <p className="font-semibold text-xs">{c.fullName}</p>
+                                  <p className="font-mono text-[10px] text-muted-foreground">{c.candidateCode}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {isDone && <Badge className="text-[9px] h-4 px-1.5 bg-emerald-100 text-emerald-700 border-emerald-200">Done</Badge>}
+                                {inQueue && !isDone && <Badge className="text-[9px] h-4 px-1.5 bg-indigo-100 text-indigo-700 border-indigo-200">In Queue</Badge>}
+                                {!inQueue && !isDone && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-[9px] font-bold uppercase text-primary hover:bg-primary/10"
+                                    disabled={addToQueueMutation.isPending}
+                                    onClick={() => addToQueueMutation.mutate({ panelId: selectedPanel!.id, candidateId: c.id })}
+                                  >
+                                    + Add
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -1730,8 +2083,6 @@ function PanelsTab({ toast, qc, candidates, specialities }: {
     </div>
   );
 }
-
-/* ─── Helper Editable Score Cell Component ─── */
 function EditableCell({ 
   value, 
   onSave, 
@@ -1753,7 +2104,7 @@ function EditableCell({
   }, [value]);
 
   if (!canEdit) {
-    return <span className="tabular-nums font-mono text-xs text-slate-650">{value !== null ? value.toFixed(1) : "—"}</span>;
+    return <span className="tabular-nums font-mono text-sm text-slate-650">{value !== null ? value.toFixed(1) : "—"}</span>;
   }
 
   const handleBlurOrEnter = async () => {
@@ -1796,51 +2147,55 @@ function EditableCell({
 
   if (isEditing) {
     return (
-      <Input
-        type="number"
-        step="0.1"
-        min="0"
-        max={max}
-        className="w-18 h-7 text-xs text-right font-mono border-orange-400 focus:ring-orange-500 rounded px-1.5 py-0.5 bg-amber-50/50"
-        value={tempValue}
-        onChange={(e) => setTempValue(e.target.value)}
-        onBlur={handleBlurOrEnter}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") handleBlurOrEnter();
-          if (e.key === "Escape") {
-            setIsEditing(false);
-            setTempValue(value !== null ? String(value) : "");
-          }
-        }}
-        autoFocus
-      />
+      <div className="relative flex items-center justify-end">
+        <Input
+          type="number"
+          step="0.5"
+          min="0"
+          max={max}
+          className="w-28 h-10 text-base text-right font-mono font-black border-2 border-orange-500 focus:ring-orange-500 rounded-xl pr-9 pl-2 bg-orange-50/30 animate-in zoom-in-95 duration-150"
+          value={tempValue}
+          onChange={(e) => setTempValue(e.target.value)}
+          onBlur={handleBlurOrEnter}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleBlurOrEnter();
+            if (e.key === "Escape") {
+              setIsEditing(false);
+              setTempValue(value !== null ? String(value) : "");
+            }
+          }}
+          autoFocus
+        />
+        <span className="absolute right-2 text-[10px] font-black text-orange-600/60 pointer-events-none select-none">/{max}</span>
+      </div>
     );
   }
 
   return (
     <div 
       onClick={() => setIsEditing(true)} 
-      className="inline-flex items-center gap-1 cursor-pointer hover:bg-slate-100 px-2 py-1 rounded border border-dashed border-transparent hover:border-slate-300/65 transition-all font-mono text-slate-700 font-bold text-xs"
+      className="inline-flex items-center justify-end gap-2 cursor-pointer hover:bg-orange-50/70 hover:text-orange-750 px-3.5 py-2 rounded-xl border border-dashed border-slate-200 hover:border-orange-300 transition-all font-mono text-slate-900 font-black text-sm"
       title="Click to edit score"
     >
       {isSaving ? (
-        <span className="text-[10px] text-orange-500 animate-pulse font-sans font-medium">saving…</span>
+        <span className="text-xs text-orange-600 animate-pulse font-sans font-bold">Saving...</span>
       ) : (
         <span className="tabular-nums">{value !== null ? value.toFixed(1) : "—"}</span>
       )}
-      <span className="text-[9px] text-slate-350 select-none">✏️</span>
+      <span className="text-xs text-slate-400 select-none opacity-50 hover:opacity-100 transition-opacity">✏️</span>
     </div>
   );
 }
 
 /* ─── Premium Mark Sheet Tab Component ─── */
-function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors }: {
+function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors, panels = [] }: {
   specialities: { id: number; name: string; code: string }[];
   candidates: any[];
   scores: any[];
   isCEC: boolean;
   toast: any;
   doctors: any[];
+  panels?: Panel[];
 }) {
   const [selectedSpec, setSelectedSpec] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1920,10 +2275,18 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
 
     // 2. Specialization match
     if (selectedSpec === "all") return true;
+    
+    // Check if the candidate has an application for this specialty ID
     const hasApp = c.applications?.some((app: any) => String(app.specialityId) === selectedSpec);
-    const specName = specialities.find(s => String(s.id) === selectedSpec)?.name;
-    const hasPref = specName ? getSpecsArray(c).some((s: string) => s.toLowerCase() === specName.toLowerCase()) : false;
-    return hasApp || hasPref;
+    
+    // Check if the candidate has a preference for this specialty ID
+    const hasPrefId = c.preferences?.some((p: any) => String(p.specialityId) === selectedSpec);
+    
+    // Check by name as fallback
+    const spec = specialities.find(s => String(s.id) === selectedSpec);
+    const hasPrefName = spec ? getSpecsArray(c).some((s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "") === spec.name.toLowerCase().replace(/[^a-z0-9]/g, "")) : false;
+    
+    return hasApp || hasPrefId || hasPrefName;
   });
 
   const handleDownload = () => {
@@ -1932,6 +2295,32 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
       url += `&specialityId=${selectedSpec}`;
     }
     window.open(url, "_blank");
+  };
+
+  // Find panel doctors mapped to the selected speciality
+  const panelDoctors: { doctorId: number; doctorName: string; isMindMatter: boolean }[] = [];
+  if (selectedSpec !== "all") {
+    const specId = Number(selectedSpec);
+    const specPanels = panels.filter(p => p.specialityId === specId);
+    specPanels.forEach(p => {
+      p.members.forEach(m => {
+        if (!panelDoctors.some(d => d.doctorId === m.doctorId)) {
+          panelDoctors.push({
+            doctorId: m.doctorId,
+            doctorName: m.doctorName,
+            isMindMatter: p.isMindMatter ?? false
+          });
+        }
+      });
+    });
+  }
+
+  const isMindMatterScore = (s: { doctorId: number; specialityId: number | null }) => {
+    return panels.some(p => 
+      p.specialityId === s.specialityId && 
+      p.members.some(m => m.doctorId === s.doctorId) && 
+      (p as any).isMindMatter === true
+    );
   };
 
   // Helper stats
@@ -1965,7 +2354,7 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
                   <SelectContent className="rounded-xl">
                     <SelectItem value="all" className="font-semibold text-slate-750">All Specialities</SelectItem>
                     {specialities.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)} className="text-xs font-semibold text-slate-750">
+                      <SelectItem key={s.id} value={String(s.id)} className="text-xs font-semibold text-slate-755">
                         {s.name} ({s.code})
                       </SelectItem>
                     ))}
@@ -2050,16 +2439,26 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
                     <th className="text-left px-6 py-3.5 font-black">Candidate</th>
                     <th className="text-center px-4 py-3.5 font-black w-24">Code</th>
                     <th className="text-right px-4 py-3.5 font-black w-28">MCQ (Max 50)</th>
-                    <th className="text-right px-4 py-3.5 font-black w-24">Doc 1 (Max 50)</th>
-                    <th className="text-right px-4 py-3.5 font-black w-24">Doc 2 (Max 50)</th>
-                    <th className="text-right px-4 py-3.5 font-black w-24">Doc 3 (Max 50)</th>
-                    <th className="text-right px-4 py-3.5 font-black w-24">Doc 4 (Max 50)</th>
+                    {selectedSpec === "all" ? (
+                      <>
+                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 1 (Max 50)</th>
+                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 2 (Max 50)</th>
+                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 3 (Max 50)</th>
+                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 4 (Max 50)</th>
+                      </>
+                    ) : (
+                      panelDoctors.map((doc) => (
+                        <th key={doc.doctorId} className="text-right px-4 py-3.5 font-black max-w-[120px] truncate" title={doc.doctorName}>
+                          {doc.doctorName} (Max {doc.isMindMatter ? 10 : 50})
+                        </th>
+                      ))
+                    )}
                     <th className="text-right px-4 py-3.5 font-black w-28">Avg VIVA (Max 50)</th>
                     <th className="text-right px-4 py-3.5 font-black w-28">Mind Matter (Max 10)</th>
                     <th className="text-right px-6 py-3.5 font-black w-32">Total (Max 110)</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700 font-semibold">
+                <tbody className="divide-y divide-slate-100 text-slate-700 font-semibold animate-in fade-in duration-300">
                   {filteredCandidates.map((c) => {
                     const candSpecs = getSpecsArray(c);
                     const targetAppSpecId = c.applications?.[0]?.specialityId;
@@ -2070,12 +2469,23 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
                       s.candidateId === c.id && 
                       (currentSpecId ? s.specialityId === currentSpecId : true)
                     );
-                    const avgViva = candScores.length > 0
-                      ? candScores.reduce((sum, s) => sum + s.score, 0) / candScores.length
+
+                    // Separate VIVA and Mind Matter panel scores
+                    const candidateVivaScores = candScores.filter(s => !isMindMatterScore(s));
+                    const candidateMmScores = candScores.filter(s => isMindMatterScore(s));
+
+                    const avgViva = candidateVivaScores.length > 0
+                      ? candidateVivaScores.reduce((sum, s) => sum + s.score, 0) / candidateVivaScores.length
+                      : null;
+
+                    const avgMindMatter = candidateMmScores.length > 0
+                      ? candidateMmScores.reduce((sum, s) => sum + s.score, 0) / candidateMmScores.length
                       : null;
 
                     const mcqScore = c.mcqScore !== null ? Number(c.mcqScore) : null;
-                    const mindMatterScore = c.psychometricScore !== null ? Number(c.psychometricScore) : null;
+                    const mindMatterScore = avgMindMatter !== null
+                      ? avgMindMatter
+                      : (c.psychometricScore !== null ? Number(c.psychometricScore) : null);
                     
                     const totalScore = (mcqScore !== null || avgViva !== null || mindMatterScore !== null)
                       ? (mcqScore ?? 0) + (avgViva ?? 0) + (mindMatterScore ?? 0)
@@ -2117,46 +2527,88 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
                             }}
                           />
                         </td>
-                        {/* 4 Doctor columns */}
-                        {[1, 2, 3, 4].map((colIndex) => {
-                          const sEntry = sortedScores[colIndex - 1];
-                          return (
-                            <td key={colIndex} className="px-4 py-4 text-right">
-                              {sEntry ? (
-                                <div className="flex flex-col items-end">
-                                  <EditableCell
-                                    value={sEntry.score}
-                                    max={50}
-                                    canEdit={canEdit}
-                                    onSave={async (val) => {
-                                      await updateScoreMutation.mutateAsync({
-                                        candidateId: c.id,
-                                        vivaScore: val,
-                                        targetDoctorId: sEntry.doctorId
-                                      });
-                                    }}
-                                  />
-                                  <span className="block text-[8px] text-slate-400 truncate max-w-[80px] text-right" title={sEntry.doctorName}>
-                                    {sEntry.doctorName}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="text-slate-350 text-xs font-mono">
-                                  {canEdit ? (
-                                    <button
-                                      onClick={() => setVivaDialogOpen(c)}
-                                      className="text-[10px] text-indigo-400 hover:text-indigo-600 hover:underline font-sans font-bold"
-                                    >
-                                      + Doc
-                                    </button>
-                                  ) : (
-                                    "—"
-                                  )}
-                                </div>
-                              )}
-                            </td>
-                          );
-                        })}
+                        {/* 4 Doctor columns or specialty specific panel doctors */}
+                        {selectedSpec === "all" ? (
+                          [1, 2, 3, 4].map((colIndex) => {
+                            const sEntry = sortedScores[colIndex - 1];
+                            const isMM = sEntry ? isMindMatterScore(sEntry) : false;
+                            const maxVal = isMM ? 10 : 50;
+
+                            return (
+                              <td key={colIndex} className="px-4 py-4 text-right">
+                                {sEntry ? (
+                                  <div className="flex flex-col items-end">
+                                    <EditableCell
+                                      value={sEntry.score}
+                                      max={maxVal}
+                                      canEdit={canEdit}
+                                      onSave={async (val) => {
+                                        await updateScoreMutation.mutateAsync({
+                                          candidateId: c.id,
+                                          vivaScore: val,
+                                          targetDoctorId: sEntry.doctorId
+                                        });
+                                      }}
+                                    />
+                                    <span className="block text-[8px] text-slate-400 truncate max-w-[80px] text-right" title={sEntry.doctorName}>
+                                      {sEntry.doctorName}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-350 text-xs font-mono">
+                                    {canEdit ? (
+                                      <button
+                                        onClick={() => setVivaDialogOpen(c)}
+                                        className="text-[10px] text-indigo-400 hover:text-indigo-600 hover:underline font-sans font-bold"
+                                      >
+                                        + Doc
+                                      </button>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })
+                        ) : (
+                          panelDoctors.map((doc) => {
+                            const sEntry = candScores.find(s => s.doctorId === doc.doctorId);
+                            return (
+                              <td key={doc.doctorId} className="px-4 py-4 text-right">
+                                {sEntry ? (
+                                  <div className="flex flex-col items-end">
+                                    <EditableCell
+                                      value={sEntry.score}
+                                      max={doc.isMindMatter ? 10 : 50}
+                                      canEdit={canEdit}
+                                      onSave={async (val) => {
+                                        await updateScoreMutation.mutateAsync({
+                                          candidateId: c.id,
+                                          vivaScore: val,
+                                          targetDoctorId: sEntry.doctorId
+                                        });
+                                      }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-350 text-xs font-mono">
+                                    {canEdit ? (
+                                      <button
+                                        onClick={() => setVivaDialogOpen(c)}
+                                        className="text-[10px] text-indigo-400 hover:text-indigo-600 hover:underline font-sans font-bold"
+                                      >
+                                        + Score
+                                      </button>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })
+                        )}
                         <td className="px-4 py-4 text-right">
                           <div className="flex flex-col items-end">
                             <div 
@@ -2167,9 +2619,9 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
                               <span className="tabular-nums">{avgViva !== null ? avgViva.toFixed(1) : "—"}</span>
                               <span className="text-[10px] text-slate-400 select-none">✏️</span>
                             </div>
-                            {candScores.length > 0 && (
-                              <span className="text-[9px] text-slate-450 font-bold uppercase tracking-wider mt-0.5">
-                                {candScores.length} {candScores.length === 1 ? "doc" : "docs"}
+                            {candidateVivaScores.length > 0 && (
+                              <span className="text-[9px] text-slate-455 font-bold uppercase tracking-wider mt-0.5">
+                                {candidateVivaScores.length} {candidateVivaScores.length === 1 ? "doc" : "docs"}
                               </span>
                             )}
                           </div>
@@ -2214,6 +2666,7 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors 
           selectedSpec={selectedSpec}
           specialities={specialities}
           updateScoreMutation={updateScoreMutation}
+          panels={panels}
         />
       )}
     </div>
@@ -2230,6 +2683,7 @@ function VivaScoresDialog({
   selectedSpec,
   specialities,
   updateScoreMutation,
+  panels = [],
 }: {
   candidate: any;
   open: boolean;
@@ -2239,6 +2693,7 @@ function VivaScoresDialog({
   selectedSpec: string;
   specialities: any[];
   updateScoreMutation: any;
+  panels?: Panel[];
 }) {
   const [newDoctorId, setNewDoctorId] = useState<string>("");
   const [newScore, setNewScore] = useState<string>("");
@@ -2274,6 +2729,9 @@ function VivaScoresDialog({
     (s) => s.candidateId === candidate.id && (specialityId ? s.specialityId === specialityId : true)
   );
 
+  const isMMPanel = panels.some(p => p.specialityId === specialityId && p.isMindMatter === true);
+  const maxVal = isMMPanel ? 10 : 50;
+
   // Set up temporary scores state for editing inputs
   useEffect(() => {
     const initialTemp: Record<number, string> = {};
@@ -2292,7 +2750,7 @@ function VivaScoresDialog({
     const valStr = tempScores[doctorId]?.trim();
     if (valStr === undefined || valStr === "") return;
     const val = parseFloat(valStr);
-    if (isNaN(val) || val < 0 || val > 50) {
+    if (isNaN(val) || val < 0 || val > maxVal) {
       // Reset to original score
       const original = candidateScores.find(s => s.doctorId === doctorId)?.score;
       setTempScores(prev => ({ ...prev, [doctorId]: original !== undefined ? String(original) : "" }));
@@ -2318,7 +2776,7 @@ function VivaScoresDialog({
   };
 
   const handleDeleteScore = async (doctorId: number, doctorName: string) => {
-    if (!window.confirm(`Are you sure you want to remove the VIVA score given by ${doctorName}?`)) {
+    if (!window.confirm(`Are you sure you want to remove the score given by ${doctorName}?`)) {
       return;
     }
     setSavingDoctorId(doctorId);
@@ -2336,7 +2794,7 @@ function VivaScoresDialog({
   const handleAddNewScore = async () => {
     if (!newDoctorId || !newScore.trim()) return;
     const val = parseFloat(newScore);
-    if (isNaN(val) || val < 0 || val > 50) return;
+    if (isNaN(val) || val < 0 || val > maxVal) return;
 
     setIsSubmittingNew(true);
     try {
@@ -2410,7 +2868,7 @@ function VivaScoresDialog({
                             type="number"
                             step="0.5"
                             min="0"
-                            max="50"
+                            max={maxVal}
                             className="w-20 h-9 font-mono font-bold text-right text-xs pr-7 border-slate-200 focus:ring-orange-500 rounded-lg"
                             value={tempScores[s.doctorId] !== undefined ? tempScores[s.doctorId] : ""}
                             onChange={(e) => setTempScores({ ...tempScores, [s.doctorId]: e.target.value })}
@@ -2423,7 +2881,7 @@ function VivaScoresDialog({
                             onBlur={() => handleUpdateScore(s.doctorId)}
                             disabled={isSavingRow}
                           />
-                          <span className="absolute right-2 text-[9px] font-black text-slate-400">/50</span>
+                          <span className="absolute right-2 text-[9px] font-black text-slate-400">/{maxVal}</span>
                         </div>
 
                         {/* Save Button (only visible if modified) */}
@@ -2487,7 +2945,7 @@ function VivaScoresDialog({
                     type="number"
                     step="0.5"
                     min="0"
-                    max="50"
+                    max={maxVal}
                     placeholder="Score"
                     className="h-9 font-mono font-bold text-right text-xs pr-7 border-slate-200 focus:ring-orange-500 rounded-lg w-full"
                     value={newScore}
@@ -2497,7 +2955,7 @@ function VivaScoresDialog({
                     }}
                     disabled={isSubmittingNew}
                   />
-                  <span className="absolute right-2 text-[9px] font-black text-slate-400">/50</span>
+                  <span className="absolute right-2 text-[9px] font-black text-slate-400">/{maxVal}</span>
                 </div>
 
                 {/* Add button */}

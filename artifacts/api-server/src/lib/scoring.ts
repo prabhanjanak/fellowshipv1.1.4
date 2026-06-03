@@ -70,6 +70,22 @@ export async function computeScoresForProgram(programId: number): Promise<Candid
 
   const result: CandidateScore[] = [];
 
+  const { sql } = await import("drizzle-orm");
+  const panelQuery = await db.execute(sql`
+    SELECT ip.id, ip.name, ip.room_number, ip.speciality_id, ip.is_mind_matter, ipm.doctor_id
+    FROM interview_panels ip
+    LEFT JOIN interview_panel_members ipm ON ip.id = ipm.panel_id
+  `);
+  const allPanels = panelQuery.rows as Array<Record<string, any>>;
+
+  const isMindMatterScore = (s: { doctorId: number; specialityId: number | null }) => {
+    return allPanels.some(p => 
+      p.speciality_id === s.specialityId && 
+      p.doctor_id === s.doctorId && 
+      p.is_mind_matter === true
+    );
+  };
+
   // 2. Compute Candidate Scores & specialty-specific values
   for (const c of candidates) {
     const candPrefs = prefs
@@ -83,7 +99,16 @@ export async function computeScoresForProgram(programId: number): Promise<Candid
     const psychos = candAttempts.filter((a) => exams.find((e) => e.id === a.examId)?.kind?.startsWith("psychometric"));
 
     const mcqScore = mcqs.length > 0 ? mcqs.reduce((s, a) => s + (a.score ?? 0), 0) / mcqs.length : (Number(c.mcqScore) || 0);
-    const psychoScore = psychos.length > 0 ? psychos.reduce((s, a) => s + (a.score ?? 0), 0) / psychos.length : (Number(c.psychometricScore) || 0);
+
+    // Compute candidate-wide Mind Matter score based on direct psychometric score or doctor Mind Matter panel entries
+    const mmInterviews = interviews.filter((i) => i.candidateId === c.id && isMindMatterScore(i));
+    const avgMindMatter = mmInterviews.length > 0
+      ? mmInterviews.reduce((s, i) => s + i.score, 0) / mmInterviews.length
+      : null;
+
+    const psychoScore = avgMindMatter !== null
+      ? avgMindMatter
+      : (psychos.length > 0 ? psychos.reduce((s, a) => s + (a.score ?? 0), 0) / psychos.length : (Number(c.psychometricScore) || 0));
 
     // Dynamic Batch and Max Marks Lookup
     const bc = batchCandidates.find(x => x.candidateId === c.id);
@@ -95,7 +120,12 @@ export async function computeScoresForProgram(programId: number): Promise<Candid
 
     // Scale scores dynamically
     const scaledMcq = mcqMax > 0 ? (mcqScore * wMcq) / mcqMax : mcqScore;
-    const scaledPsycho = psychoMax > 0 ? (psychoScore * wPsy) / psychoMax : psychoScore;
+    
+    // Scale psychometric/Mind Matter score: if it came from Mind Matter panel (avgMindMatter is out of 10), it is already scaled.
+    // Otherwise scale it dynamically out of psychoMax.
+    const scaledPsycho = avgMindMatter !== null
+      ? psychoScore
+      : (psychoMax > 0 ? (psychoScore * wPsy) / psychoMax : psychoScore);
 
     // Handle multiple submissions by selecting the LATEST submission by submittedAt
     const candidateSubmissions = submissions
@@ -163,8 +193,8 @@ export async function computeScoresForProgram(programId: number): Promise<Candid
         .map(l => l.trim())
         .filter(l => l && l.toLowerCase() !== "not applicable" && l.toLowerCase() !== "none");
 
-      // Average interview scores across all panel doctors independently
-      const specInterviews = interviews.filter((i) => i.candidateId === c.id && i.specialityId === p.specialityId);
+      // Average interview VIVA scores across all panel doctors independently (excluding Mind Matter)
+      const specInterviews = interviews.filter((i) => i.candidateId === c.id && i.specialityId === p.specialityId && !isMindMatterScore(i));
       const avgInterview = specInterviews.length > 0 
         ? specInterviews.reduce((s, i) => s + i.score, 0) / specInterviews.length 
         : 0;

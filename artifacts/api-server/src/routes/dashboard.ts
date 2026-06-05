@@ -1,14 +1,13 @@
 import { Router } from "express";
 import { desc, eq, sql } from "drizzle-orm";
 import {
-  db,
+  readDb,
   candidatesTable,
   programsTable,
   specialitiesTable,
   examAttemptsTable,
   examsTable,
   interviewScoresTable,
-  allocationsTable,
   usersTable,
   unitsTable,
   applicationSubmissionsTable,
@@ -24,7 +23,7 @@ router.get("/dashboard/summary", requireAuth, async (req: any, res) => {
   const isMock = req.isMockMode || false;
 
   // 1. Fetch all submissions
-  const allSubmissions = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
+  const allSubmissions = await readDb.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
   
   // Overall metric definitions:
   // Non-draft submissions are formal applications
@@ -207,12 +206,12 @@ router.get("/dashboard/summary", requireAuth, async (req: any, res) => {
 
 router.get("/dashboard/recent-activity", requireAuth, async (req: any, res) => {
   const isMock = req.isMockMode;
-  const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock)).orderBy(desc(candidatesTable.createdAt)).limit(5);
-  const attempts = await db.select().from(examAttemptsTable).orderBy(desc(examAttemptsTable.startedAt)).limit(5);
-  const exams = await db.select().from(examsTable).where(eq(examsTable.isMock, isMock));
-  const interviews = await db.select().from(interviewScoresTable).orderBy(desc(interviewScoresTable.submittedAt)).limit(5);
-  const users = await db.select().from(usersTable);
-  const allCandidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
+  const candidates = await readDb.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock)).orderBy(desc(candidatesTable.createdAt)).limit(5);
+  const attempts = await readDb.select().from(examAttemptsTable).orderBy(desc(examAttemptsTable.startedAt)).limit(5);
+  const exams = await readDb.select().from(examsTable).where(eq(examsTable.isMock, isMock));
+  const interviews = await readDb.select().from(interviewScoresTable).orderBy(desc(interviewScoresTable.submittedAt)).limit(5);
+  const users = await readDb.select().from(usersTable);
+  const allCandidates = await readDb.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
 
   type Item = { id: string; kind: string; title: string; subtitle: string | null; at: string };
   const items: Item[] = [];
@@ -251,7 +250,7 @@ router.get("/dashboard/doctor-stats", requireAuth, requireRole("doctor"), async 
   const doctorId = req.user!.userId;
 
   // 1. Find the doctor's active panel and speciality
-  const panelQuery = await db.execute(sql`
+  const panelQuery = await readDb.execute(sql`
     SELECT ip.id as panel_id, ip.name as panel_name, ip.speciality_id,
            s.name as speciality_name
     FROM interview_panel_members ipm
@@ -279,7 +278,7 @@ router.get("/dashboard/doctor-stats", requireAuth, requireRole("doctor"), async 
     panelName = activePanel.panel_name;
     specialityName = activePanel.speciality_name;
 
-    const queueCountQuery = await db.execute(sql`
+    const queueCountQuery = await readDb.execute(sql`
       SELECT COUNT(*) as total,
              SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
       FROM panel_queue
@@ -291,7 +290,7 @@ router.get("/dashboard/doctor-stats", requireAuth, requireRole("doctor"), async 
     remaining = totalAssigned - totalCompleted;
   } else {
     // Fallback: use doctor_assignments table
-    const assignRows = await db.execute(sql`
+    const assignRows = await readDb.execute(sql`
       SELECT COUNT(*) as total,
              SUM(CASE WHEN da.status = 'completed' THEN 1 ELSE 0 END) as done
       FROM doctor_assignments da
@@ -304,7 +303,7 @@ router.get("/dashboard/doctor-stats", requireAuth, requireRole("doctor"), async 
   }
 
   // 3. Avg interview duration from interview_scores for this doctor
-  const avgQuery = await db.execute(sql`
+  const avgQuery = await readDb.execute(sql`
     SELECT AVG(EXTRACT(EPOCH FROM (submitted_at - created_at)) / 60) as avg_minutes
     FROM interview_scores
     WHERE doctor_id = ${doctorId}
@@ -315,7 +314,7 @@ router.get("/dashboard/doctor-stats", requireAuth, requireRole("doctor"), async 
   }
 
   // 4. Recent scored candidates (last 5)
-  const recentScores = await db.execute(sql`
+  const recentScores = await readDb.execute(sql`
     SELECT ist.id, ist.candidate_id, ist.score, ist.submitted_at,
            c.full_name as candidate_name, c.candidate_code
     FROM interview_scores ist

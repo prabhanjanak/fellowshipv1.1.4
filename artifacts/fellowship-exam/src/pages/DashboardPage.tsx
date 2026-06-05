@@ -63,6 +63,57 @@ const statusColors: Record<string, string> = {
   allocated: "bg-teal-100 text-teal-700 border-teal-250 dark:bg-teal-950/40 dark:text-teal-400",
 };
 
+const parseDeviceAgent = (ua: string | null | undefined) => {
+  if (!ua) return { type: "Unknown", name: "Unknown Device" };
+
+  // Handle parsed app device info (e.g. "iOS Mobile (App)", "Android Mobile (App)")
+  if (ua.includes(" (App)")) {
+    const type = ua.includes("Tablet") || ua.includes("iPad") ? "Tablet" : "Mobile";
+    return { type, name: ua };
+  }
+
+  const u = ua.toLowerCase();
+  let type = "Desktop";
+  let name = "Unknown Device";
+
+  if (u.includes("ipad") || (u.includes("macintosh") && navigator.maxTouchPoints > 1)) {
+    type = "Tablet";
+    name = "iPad";
+  } else if (u.includes("iphone") || u.includes("ipod")) {
+    type = "Mobile";
+    name = "iPhone";
+  } else if (u.includes("android")) {
+    type = u.includes("mobile") ? "Mobile" : "Tablet";
+    // Try to extract Android device name/model
+    const match = ua.match(/\(([^)]+)\)/);
+    if (match && match[1]) {
+      const parts = match[1].split(";");
+      const devicePart = parts.find(p => p.includes("Build/") || (!p.includes("Android") && !p.includes("Linux") && !p.includes("wv")));
+      if (devicePart) {
+        name = devicePart.split("Build/")[0].trim();
+      } else {
+        name = parts[parts.length - 1].trim();
+      }
+    } else {
+      name = "Android Device";
+    }
+  } else if (u.includes("windows phone")) {
+    type = "Mobile";
+    name = "Windows Phone";
+  } else if (u.includes("windows")) {
+    type = "Desktop";
+    name = "Windows PC";
+  } else if (u.includes("macintosh") || u.includes("mac os")) {
+    type = "Desktop";
+    name = "Mac PC";
+  } else if (u.includes("linux")) {
+    type = "Desktop";
+    name = "Linux PC";
+  }
+
+  return { type, name };
+};
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -73,6 +124,18 @@ export default function DashboardPage() {
   const [timeoutMinutes, setTimeoutMinutes] = useState("30");
   const [activeTab, setActiveTab] = useState<number | null>(null);
   const [dashboardTab, setDashboardTab] = useState<"candidates" | "sessions">("candidates");
+  const [systemIp, setSystemIp] = useState("");
+
+  useEffect(() => {
+    fetch("/api/system-ip")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.ip) {
+          setSystemIp(data.ip);
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch system IP:", err));
+  }, []);
 
   const { data: summary, refetch: refetchSummary, isFetching } = useQuery<DashboardSummaryData>({
     queryKey: ["dashboard-summary"],
@@ -217,7 +280,7 @@ export default function DashboardPage() {
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 bg-orange-50/80 rounded-full px-4 py-1.5 border border-orange-100">
                 <ShieldCheck className="h-3.5 w-3.5 text-orange-600" />
-                <span className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Secure Master Terminal</span>
+                <span className="text-[10px] font-bold text-orange-800 uppercase tracking-widest">Secure Master Terminal {systemIp ? `(${systemIp})` : ""}</span>
               </div>
               <div className="flex items-center gap-2 bg-slate-100 rounded-full px-4 py-1.5 border border-slate-250">
                 <Clock className="h-3.5 w-3.5 text-slate-500 animate-spin" style={{ animationDuration: '8s' }} />
@@ -552,25 +615,37 @@ export default function DashboardPage() {
                   <tr className="border-b bg-slate-50">
                     <th className="text-left px-6 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">User Info</th>
                     <th className="text-left px-4 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">IP Address</th>
-                    <th className="text-left px-4 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">Device Agent</th>
+                    <th className="text-left px-4 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">Device Type & Name</th>
                     <th className="text-left px-4 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">Last Active</th>
                     <th className="text-right px-6 py-3.5 font-black text-[10px] text-slate-500 uppercase tracking-widest">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {activeSessions.map((sess) => (
-                    <tr key={sess.id} className="hover:bg-orange-50/10">
-                      <td className="px-6 py-3.5">
-                        <p className="font-extrabold text-sm text-slate-900">{sess.userName}</p>
-                        <p className="text-xs text-muted-foreground">{sess.userEmail}</p>
-                        <Badge variant="outline" className="text-[9px] uppercase tracking-wider h-5 mt-1 border-indigo-200 text-indigo-700 bg-indigo-50 font-bold">
-                          {sess.role}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3.5 font-mono text-xs text-slate-655">{sess.ipAddress || "N/A"}</td>
-                      <td className="px-4 py-3.5 text-xs text-slate-500 truncate max-w-[200px]" title={sess.deviceInfo}>
-                        {sess.deviceInfo || "N/A"}
-                      </td>
+                  {activeSessions.map((sess) => {
+                    const parsedAgent = parseDeviceAgent(sess.deviceInfo);
+                    return (
+                      <tr key={sess.id} className="hover:bg-orange-50/10">
+                        <td className="px-6 py-3.5">
+                          <p className="font-extrabold text-sm text-slate-900">{sess.userName}</p>
+                          <p className="text-xs text-muted-foreground">{sess.userEmail}</p>
+                          <Badge variant="outline" className="text-[9px] uppercase tracking-wider h-5 mt-1 border-indigo-200 text-indigo-700 bg-indigo-50 font-bold">
+                            {sess.role}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3.5 font-mono text-xs text-slate-655">{sess.ipAddress || "N/A"}</td>
+                        <td className="px-4 py-3.5">
+                          <div className="space-y-1">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {parsedAgent.type}
+                            </span>
+                            <p className="text-xs font-bold text-slate-850">
+                              {parsedAgent.name}
+                            </p>
+                            <p className="text-[9px] font-semibold text-slate-400 max-w-[200px] truncate" title={sess.deviceInfo}>
+                              {sess.deviceInfo || "Raw agent unavailable"}
+                            </p>
+                          </div>
+                        </td>
                       <td className="px-4 py-3.5 text-xs text-slate-500 font-mono">
                         {new Date(sess.lastActivityAt).toLocaleTimeString("en-IN")}
                       </td>
@@ -591,7 +666,8 @@ export default function DashboardPage() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                  );
+                })}
                 </tbody>
               </table>
             </div>

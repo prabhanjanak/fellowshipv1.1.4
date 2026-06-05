@@ -25,7 +25,7 @@ async function getPanels(isMockMode: boolean = false) {
   `)).rows as Array<Record<string, unknown>>;
 
   const members = (await db.execute(sql`
-    SELECT ipm.panel_id, ipm.doctor_id, ipm.is_main,
+    SELECT ipm.panel_id, ipm.doctor_id, ipm.is_main, ipm.marks_entry_enabled,
            u.full_name as doctor_name, u.email as doctor_email
     FROM interview_panel_members ipm
     JOIN users u ON u.id = ipm.doctor_id
@@ -47,6 +47,7 @@ async function getPanels(isMockMode: boolean = false) {
         doctorName: m["doctor_name"],
         doctorEmail: m["doctor_email"],
         isMain: m["is_main"],
+        marksEntryEnabled: m["marks_entry_enabled"] === true,
       })),
   }));
 }
@@ -83,24 +84,42 @@ router.post("/panels",
     if (!name || !roomNumber) return res.status(400).json({ error: "name and roomNumber required" });
 
     const isMock = (req as any).isMockMode ?? false;
+    const finalSpecId = isMindMatter ? null : (specialityId ?? null);
     const [panel] = (await db.execute(sql`
       INSERT INTO interview_panels (name, room_number, program_id, speciality_id, is_mind_matter, is_mock)
-      VALUES (${name}, ${roomNumber}, ${programId ?? null}, ${specialityId ?? null}, ${isMindMatter ?? false}, ${isMock})
+      VALUES (${name}, ${roomNumber}, ${programId ?? null}, ${finalSpecId}, ${isMindMatter ?? false}, ${isMock})
       RETURNING *
     `)).rows as Array<Record<string, unknown>>;
 
     if (doctorIds?.length) {
       for (const did of doctorIds) {
         await db.execute(sql`
-          INSERT INTO interview_panel_members (panel_id, doctor_id, is_main)
-          VALUES (${panel!["id"]}, ${did}, ${did === mainDoctorId})
+          INSERT INTO interview_panel_members (panel_id, doctor_id, is_main, marks_entry_enabled)
+          VALUES (${panel!["id"]}, ${did}, ${did === mainDoctorId}, ${did === mainDoctorId})
           ON CONFLICT (panel_id, doctor_id) DO NOTHING
         `);
       }
     }
+
+    // Auto-assign ALL candidates when creating a Mind Matter panel
+    if (isMindMatter) {
+      const allCandidates = (await db.execute(sql`
+        SELECT id FROM candidates WHERE is_mock = ${isMock} ORDER BY full_name ASC
+      `)).rows as Array<Record<string, unknown>>;
+      for (let i = 0; i < allCandidates.length; i++) {
+        const cid = Number(allCandidates[i]!["id"]);
+        await db.execute(sql`
+          INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status, called_at)
+          VALUES (${panel!["id"]}, ${cid}, ${i}, 'waiting', NULL)
+          ON CONFLICT (panel_id, candidate_id) DO NOTHING
+        `);
+      }
+      logger.info(`Mind Matter panel ${panel!["id"]} created — auto-assigned ${allCandidates.length} candidates to queue.`);
+    }
+
     const allPanels = await getPanels((req as any).isMockMode);
     const created = allPanels.find((p) => String(p.id) === String(panel!["id"])) ?? {
-      id: panel!["id"], name, roomNumber, specialityId: specialityId ?? null,
+      id: panel!["id"], name, roomNumber, specialityId: finalSpecId,
       isMindMatter: isMindMatter ?? false, isActive: true, programId: programId ?? null,
       createdAt: new Date().toISOString(), members: [],
     };
@@ -113,23 +132,90 @@ router.patch("/panels/:id",
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
   async (req, res) => {
     const id = Number(req.params["id"]);
-    const { name, roomNumber, isActive, specialityId, isMindMatter } = req.body as {
+    const { name, roomNumber, isActive, specialityId, isMindMatter, doctorIds, mainDoctorId } = req.body as {
       name?: string; roomNumber?: string; isActive?: boolean; specialityId?: number | null; isMindMatter?: boolean;
+      doctorIds?: number[]; mainDoctorId?: number | null;
     };
+    const isMock = (req as any).isMockMode ?? false;
     const parts: string[] = [];
     if (name !== undefined) parts.push(`name = '${name.replace(/'/g, "''")}'`);
     if (roomNumber !== undefined) parts.push(`room_number = '${roomNumber.replace(/'/g, "''")}'`);
     if (isActive !== undefined) parts.push(`is_active = ${isActive}`);
-    if (isMindMatter !== undefined) parts.push(`is_mind_matter = ${isMindMatter}`);
-    if (specialityId !== undefined) {
+    
+    if (isMindMatter !== undefined) {
+      parts.push(`is_mind_matter = ${isMindMatter}`);
+      if (isMindMatter === true) {
+        parts.push(`speciality_id = NULL`);
+      }
+    }
+    
+    if (specialityId !== undefined && isMindMatter !== true) {
       parts.push(`speciality_id = ${specialityId === null ? "NULL" : specialityId}`);
     }
-    if (parts.length) {
-      await db.execute(sql.raw(`UPDATE interview_panels SET ${parts.join(", ")} WHERE id = ${id}`));
+
+    try {
+      await db.transaction(async (tx) => {
+        if (parts.length) {
+          await tx.execute(sql.raw(`UPDATE interview_panels SET ${parts.join(", ")} WHERE id = ${id}`));
+        }
+
+        if (doctorIds !== undefined) {
+          // 1. Delete members not in the new list
+          if (doctorIds.length === 0) {
+            await tx.execute(sql`
+              DELETE FROM interview_panel_members WHERE panel_id = ${id}
+            `);
+          } else {
+            await tx.execute(sql.raw(`
+              DELETE FROM interview_panel_members 
+              WHERE panel_id = ${id} AND doctor_id NOT IN (${doctorIds.join(",")})
+            `));
+          }
+
+          // 2. Reset others first to prevent unique constraint violation
+          await tx.execute(sql`
+            UPDATE interview_panel_members
+            SET marks_entry_enabled = FALSE, is_main = FALSE
+            WHERE panel_id = ${id}
+          `);
+
+          // 3. Insert or update the new list of members
+          for (const did of doctorIds) {
+            const isMain = did === mainDoctorId;
+            await tx.execute(sql`
+              INSERT INTO interview_panel_members (panel_id, doctor_id, is_main, marks_entry_enabled)
+              VALUES (${id}, ${did}, ${isMain}, ${isMain})
+              ON CONFLICT (panel_id, doctor_id) DO UPDATE SET
+                is_main = ${isMain},
+                marks_entry_enabled = ${isMain}
+            `);
+          }
+        }
+      });
+
+      // Auto-assign ALL candidates when converted to a Mind Matter panel
+      if (isMindMatter === true) {
+        const allCandidates = (await db.execute(sql`
+          SELECT id FROM candidates WHERE is_mock = ${isMock} ORDER BY full_name ASC
+        `)).rows as Array<Record<string, unknown>>;
+        for (let i = 0; i < allCandidates.length; i++) {
+          const cid = Number(allCandidates[i]!["id"]);
+          await db.execute(sql`
+            INSERT INTO panel_queue (panel_id, candidate_id, queue_position, status, called_at)
+            VALUES (${id}, ${cid}, ${i}, 'waiting', NULL)
+            ON CONFLICT (panel_id, candidate_id) DO NOTHING
+          `);
+        }
+        logger.info(`Panel ${id} updated to Mind Matter — auto-assigned ${allCandidates.length} candidates.`);
+      }
+
+      const allPanels = await getPanels((req as any).isMockMode);
+      const updated = allPanels.find((p) => String(p.id) === String(id)) ?? { error: "Not found" };
+      res.json(updated);
+    } catch (err: any) {
+      logger.error({ err }, "Failed to patch interview panel");
+      res.status(500).json({ error: err.message || "Failed to patch interview panel." });
     }
-    const allPanels = await getPanels((req as any).isMockMode);
-    const updated = allPanels.find((p) => String(p.id) === String(id)) ?? { error: "Not found" };
-    res.json(updated);
   }
 );
 
@@ -152,19 +238,51 @@ router.post("/panels/:id/members",
   requireRole("super_admin", "program_admin", "central_exam_coordinator"),
   async (req, res) => {
     const panelId = Number(req.params["id"]);
-    const { doctorId, isMain } = req.body as { doctorId: number; isMain?: boolean };
-    await db.execute(sql`
-      INSERT INTO interview_panel_members (panel_id, doctor_id, is_main)
-      VALUES (${panelId}, ${doctorId}, ${isMain ?? false})
-      ON CONFLICT (panel_id, doctor_id) DO UPDATE SET is_main = ${isMain ?? false}
-    `);
-    if (isMain) {
-      await db.execute(sql`
-        UPDATE interview_panel_members SET is_main = FALSE
-        WHERE panel_id = ${panelId} AND doctor_id != ${doctorId}
-      `);
+    const { doctorId, isMain, marksEntryEnabled } = req.body as { doctorId: number; isMain?: boolean; marksEntryEnabled?: boolean };
+    
+    try {
+      const [panelRow] = (await db.execute(sql`
+        SELECT is_mind_matter FROM interview_panels WHERE id = ${panelId}
+      `)).rows as Array<{ is_mind_matter: boolean }>;
+
+      const isMindMatter = panelRow?.is_mind_matter === true;
+      
+      let finalIsMain = isMain ?? false;
+      let finalMarksEntry = marksEntryEnabled ?? false;
+      
+      // For Mind Matter panels, marks entry is tied directly to the Main Doctor status
+      if (isMindMatter) {
+        if (isMain !== undefined) {
+          finalMarksEntry = isMain;
+        } else if (marksEntryEnabled !== undefined) {
+          finalIsMain = marksEntryEnabled;
+        }
+      }
+
+      await db.transaction(async (tx) => {
+        // isMain is still exclusive — only one main doctor per panel
+        if (finalIsMain) {
+          await tx.execute(sql`
+            UPDATE interview_panel_members SET is_main = FALSE
+            WHERE panel_id = ${panelId} AND doctor_id != ${doctorId}
+          `);
+        }
+
+        // marks_entry_enabled is now INDEPENDENT per doctor — multiple doctors can be enabled
+        await tx.execute(sql`
+          INSERT INTO interview_panel_members (panel_id, doctor_id, is_main, marks_entry_enabled)
+          VALUES (${panelId}, ${doctorId}, ${finalIsMain}, ${finalMarksEntry})
+          ON CONFLICT (panel_id, doctor_id) DO UPDATE SET 
+            is_main = ${finalIsMain},
+            marks_entry_enabled = ${finalMarksEntry}
+        `);
+      });
+
+      res.json({ success: true });
+    } catch (err: any) {
+      logger.error({ err }, "Failed to update panel member configurations");
+      res.status(550).json({ error: err.message || "Failed to update member configurations." });
     }
-    res.json({ success: true });
   }
 );
 
@@ -802,13 +920,16 @@ router.get("/panel/my-status", requireAuth, requireRole("doctor"), async (req, r
   await db.execute(sql`INSERT INTO doctor_panel_status (doctor_id) VALUES (${doctorId}) ON CONFLICT (doctor_id) DO NOTHING`);
   const [row] = (await db.execute(sql`
     SELECT dps.*, c.full_name as candidate_name, c.candidate_code,
-           ip.name as panel_name, ip.room_number, ip.speciality_id, s.name as speciality_name
+           ip.id as panel_id, ip.name as panel_name, ip.room_number, ip.speciality_id,
+           ip.is_mind_matter, s.name as speciality_name, ipm.is_main as is_main_doctor,
+           ipm.marks_entry_enabled
     FROM doctor_panel_status dps
     LEFT JOIN candidates c ON c.id = dps.current_candidate_id
     LEFT JOIN interview_panel_members ipm ON ipm.doctor_id = ${doctorId}
     LEFT JOIN interview_panels ip ON ip.id = ipm.panel_id
     LEFT JOIN specialities s ON s.id = ip.speciality_id
     WHERE dps.doctor_id = ${doctorId}
+    ORDER BY ip.is_active DESC, ip.is_mind_matter DESC, ip.id DESC
     LIMIT 1
   `)).rows;
   res.json({
@@ -816,10 +937,14 @@ router.get("/panel/my-status", requireAuth, requireRole("doctor"), async (req, r
     currentCandidateId: (row as Record<string, unknown>)["current_candidate_id"],
     currentCandidateName: (row as Record<string, unknown>)["candidate_name"],
     currentCandidateCode: (row as Record<string, unknown>)["candidate_code"],
+    panelId: (row as Record<string, unknown>)["panel_id"] ?? null,
     panelName: (row as Record<string, unknown>)["panel_name"],
     roomNumber: (row as Record<string, unknown>)["room_number"],
     specialityId: (row as Record<string, unknown>)["speciality_id"],
     specialityName: (row as Record<string, unknown>)["speciality_name"],
+    isMindMatter: (row as Record<string, unknown>)["is_mind_matter"] === true || (row as Record<string, unknown>)["is_mind_matter"] === 1,
+    isMain: (row as Record<string, unknown>)["is_main_doctor"] === true,
+    marksEntryEnabled: (row as Record<string, unknown>)["marks_entry_enabled"] === true,
   });
 });
 

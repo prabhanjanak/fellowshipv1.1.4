@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, pgEnum, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, pgEnum, boolean, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -30,7 +30,10 @@ export const candidatesTable = pgTable("candidates", {
   isMock: boolean("is_mock").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index("candidates_unit_id_idx").on(table.unitId),
+  index("candidates_status_idx").on(table.status),
+]);
 
 export const insertCandidateSchema = createInsertSchema(candidatesTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCandidate = z.infer<typeof insertCandidateSchema>;

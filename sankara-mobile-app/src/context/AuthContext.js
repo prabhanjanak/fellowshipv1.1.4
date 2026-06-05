@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { api } from '../api/client';
 
@@ -28,7 +29,20 @@ export const AuthProvider = ({ children }) => {
   }
 
   const signIn = async (email, password) => {
-    const response = await api.post('/auth/login', { email, password });
+    let networkIp = "";
+    try {
+      const ipRes = await fetch("https://api.ipify.org?format=json").then((r) => r.json());
+      if (ipRes && ipRes.ip) {
+        networkIp = ipRes.ip;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch public network IP:", e);
+    }
+
+    const deviceName = Platform.OS === 'ios' ? (Platform.isPad ? 'iPad' : 'iPhone') : 'Android Device';
+    const deviceInfo = `${deviceName} (App)`;
+
+    const response = await api.post('/auth/login', { email, password, networkIp, deviceInfo });
     const authData = response.data;
     
     // Check if role is allowed for mobile

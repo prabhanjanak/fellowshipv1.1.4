@@ -156,3 +156,38 @@ Historically, candidates approved with multiple specializations (e.g., `{"Cornea
 
 This will output the number of records fixed and synchronized. The synchronizer is idempotent and safe to run multiple times.
 
+---
+
+## 8. June 2026 Update (v1.1.2 Release) - Specialty Deduplication & Multi-Doctor Marks Entry
+
+This update introduces:
+1. **Multi-Doctor Marks Entry & Averaging Logic:** Allows multiple doctors per panel to have Marks Entry Enabled. VIVA scores from all enabled doctors are averaged.
+2. **Specialty Deduplication:** Automatically groups and deduplicates specialties in all dropdowns and displays.
+
+To apply this update to your live production database (e.g. `learn.sankaraeye.in`):
+
+### Step 8.1: Run the Specialty Deduplication & Cleanup Script
+If your production database contains duplicate specialty records (e.g., from old imports or manual entries), you must run the cleanup script to merge duplicates and map all existing applications, preferences, panels, and scores to the standard 8 canonical specialties.
+
+1. **Verify Connection String:**
+   Make sure the `DATABASE_URL` environment variable is set on your server, or configure the connection string inside `artifacts/api-server/cleanup_specialities.mjs`.
+
+2. **Execute the Script:**
+   From the `artifacts/api-server` directory, run:
+   ```bash
+   node cleanup_specialities.mjs
+   ```
+
+This script will:
+- Identify the 8 standard specialties: *Cornea, Glaucoma, IOL Fellowship, Medical Retina, Oculoplasty, Pediatric Ophthalmology, Phaco Refractive, Vitreo Retina*.
+- Map any duplicate or non-standard specialty records to these 8 canonical records.
+- Safely update all related tables (`allocations`, `applications`, `batch_candidates`, `candidate_preferences`, `doctor_assignments`, `interview_panels`, `interview_scores`).
+- Delete all non-canonical specialty records from the `specialities` table.
+
+### Step 8.2: Drop Legacy Unique Index (Automatic)
+The backend startup server (`index.ts`) will automatically run a query to drop the legacy `panel_marks_entry_unq` index if it exists, enabling multiple doctors to be marked as entry-enabled simultaneously. If you need to perform this manually:
+```sql
+DROP INDEX IF EXISTS panel_marks_entry_unq;
+```
+
+

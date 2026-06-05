@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, applicationSubmissionsTable, candidatesTable, usersTable, interviewScoresTable, allocationsTable, programsTable, unitsTable, specialitiesTable, applicationsTable, batchesTable, documentsTable, batchCandidatesTable, candidatePreferencesTable } from "@workspace/db";
+import { db, readDb, applicationSubmissionsTable, candidatesTable, usersTable, interviewScoresTable, programsTable, unitsTable, specialitiesTable, applicationsTable, batchesTable, documentsTable, batchCandidatesTable, candidatePreferencesTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { requireAuth, requireRole } from "../middleware/auth";
 import * as XLSX from "xlsx";
@@ -13,13 +13,12 @@ const router: Router = Router();
 router.get("/reports/cycle-report", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
   try {
     // 1. Fetch All Data
-    const submissions = await db.select().from(applicationSubmissionsTable);
-    const candidates = await db.select().from(candidatesTable);
-    const users = await db.select().from(usersTable);
-    const scores = await db.select().from(interviewScoresTable);
-    const allocations = await db.select().from(allocationsTable);
-    const programs = await db.select().from(programsTable);
-    const units = await db.select().from(unitsTable);
+    const submissions = await readDb.select().from(applicationSubmissionsTable);
+    const candidates = await readDb.select().from(candidatesTable);
+    const users = await readDb.select().from(usersTable);
+    const scores = await readDb.select().from(interviewScoresTable);
+    const programs = await readDb.select().from(programsTable);
+    const units = await readDb.select().from(unitsTable);
 
     // 2. Prepare Detailed Financial & Admissions Sheet
     const financialAdmissionsData = submissions.map(s => {
@@ -168,13 +167,12 @@ router.get("/reports/cycle-report", requireAuth, requireRole("super_admin", "pro
 router.get("/reports/daily-report", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
   try {
     // 1. Fetch All Data
-    const submissions = await db.select().from(applicationSubmissionsTable);
-    const candidates = await db.select().from(candidatesTable);
-    const users = await db.select().from(usersTable);
-    const scores = await db.select().from(interviewScoresTable);
-    const allocations = await db.select().from(allocationsTable);
-    const programs = await db.select().from(programsTable);
-    const units = await db.select().from(unitsTable);
+    const submissions = await readDb.select().from(applicationSubmissionsTable);
+    const candidates = await readDb.select().from(candidatesTable);
+    const users = await readDb.select().from(usersTable);
+    const scores = await readDb.select().from(interviewScoresTable);
+    const programs = await readDb.select().from(programsTable);
+    const units = await readDb.select().from(unitsTable);
 
     const todayStr = new Date().toDateString();
     const isToday = (dateVal: any) => {
@@ -326,16 +324,14 @@ router.get("/reports/stats", requireAuth, requireRole("super_admin", "program_ad
     const isMock = req.isMockMode || false;
 
     // 1. Fetch data
-    const submissions = await db.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
-    const candidates = await db.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
-    const specialities = await db.select().from(specialitiesTable);
-    const allocations = await db.select().from(allocationsTable);
-    const scores = await db.select().from(interviewScoresTable);
+    const submissions = await readDb.select().from(applicationSubmissionsTable).where(eq(applicationSubmissionsTable.isMock, isMock));
+    const candidates = await readDb.select().from(candidatesTable).where(eq(candidatesTable.isMock, isMock));
+    const specialities = await readDb.select().from(specialitiesTable);
+    const scores = await readDb.select().from(interviewScoresTable);
 
     const candidateIds = new Set(candidates.map(c => c.id));
 
-    // Filter allocations and scores to keep only relevant candidates if mock
-    const activeAllocations = allocations.filter(a => candidateIds.has(a.candidateId));
+    // Filter scores to keep only relevant candidates if mock
     const activeScores = scores.filter(s => candidateIds.has(s.candidateId));
 
     // 2. Compute KPIs
@@ -345,7 +341,7 @@ router.get("/reports/stats", requireAuth, requireRole("super_admin", "program_ad
 
     const totalPending = nonDraftSubmissions.filter(s => s.status === "pending").length;
     const totalApproved = nonDraftSubmissions.filter(s => s.status === "approved").length;
-    const totalAllocated = activeAllocations.filter(a => a.status === "SELECTED").length;
+    const totalAllocated = candidates.filter(c => c.status === "allocated").length;
 
     const totalRevenue = nonDraftSubmissions.reduce((acc, s) => {
       if (s.paidAmount) {
@@ -365,8 +361,14 @@ router.get("/reports/stats", requireAuth, requireRole("super_admin", "program_ad
         return specs.some(sp => sp.toLowerCase() === spec.name.toLowerCase());
       }).length;
 
-      // Count allocations
-      const specAllocated = activeAllocations.filter(a => a.specialityId === spec.id && a.status === "SELECTED").length;
+      // Count allocated candidates who chose this specialty
+      const specAllocated = candidates.filter(c => {
+        if (c.status !== "allocated") return false;
+        const sub = nonDraftSubmissions.find(s => s.email.toLowerCase().trim() === c.email.toLowerCase().trim());
+        if (!sub) return false;
+        const specs = parseSpecializationString(sub.specialization);
+        return specs.some(sp => sp.toLowerCase() === spec.name.toLowerCase());
+      }).length;
 
       return {
         id: spec.id,
@@ -453,7 +455,7 @@ router.get("/reports/stats", requireAuth, requireRole("super_admin", "program_ad
       });
     }
 
-    const unallocatedCandidates = candidates.filter(c => c.status === "interview_completed" && !activeAllocations.some(a => a.candidateId === c.id)).length;
+    const unallocatedCandidates = candidates.filter(c => c.status === "interview_completed").length;
     if (unallocatedCandidates > 0) {
       alerts.push({
         type: "notice",

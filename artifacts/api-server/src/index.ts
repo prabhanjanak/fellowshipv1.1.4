@@ -138,6 +138,27 @@ async function runStartupFixes() {
     )
   `);
 
+  // Migration: add marks_entry_enabled column (allows multiple enabled doctors per panel)
+  await db.execute(sql`ALTER TABLE interview_panel_members ADD COLUMN IF NOT EXISTS marks_entry_enabled BOOLEAN NOT NULL DEFAULT FALSE`);
+
+  // Migration: drop the old partial unique index that blocked multiple enabled doctors.
+  // We now allow multiple doctors per panel to have marks_entry_enabled = TRUE (their scores are averaged).
+  try { await db.execute(sql.raw(`DROP INDEX IF EXISTS panel_marks_entry_unq`)); } catch (_) { /* may not exist on fresh installs */ }
+
+  // Migration: create viva_score_overrides table
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS viva_score_overrides (
+      id SERIAL PRIMARY KEY,
+      candidate_id INTEGER NOT NULL,
+      speciality_id INTEGER REFERENCES specialities(id),
+      override_score REAL NOT NULL,
+      override_reason TEXT,
+      overridden_by INTEGER NOT NULL REFERENCES users(id),
+      overridden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(candidate_id, speciality_id)
+    )
+  `);
+
   // Migration: panel_queue table
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS panel_queue (
@@ -354,6 +375,176 @@ async function runStartupFixes() {
   } catch (err: any) {
     logger.error({ err }, "Candidates database compatibility healing migration failed");
   }
+
+  // --- DYNAMIC SPECIALITIES DEDUPLICATION ---
+  try {
+    logger.info("Running dynamic specialities deduplication migration...");
+    
+    // Fetch all specialities
+    const specsRes = await db.execute(sql`SELECT id, name, code, program_id FROM specialities`);
+    const specs = specsRes.rows as Array<{ id: number; name: string; code: string; program_id: number }>;
+
+    // Canonical names mapping
+    const canonicalNames = [
+      "Cornea",
+      "Glaucoma",
+      "IOL Fellowship",
+      "Medical Retina",
+      "Oculoplasty",
+      "Pediatric Ophthalmology",
+      "Phaco Refractive",
+      "Vitreo Retina"
+    ];
+
+    // Find canonical IDs in the DB (lowest ID per name)
+    const canonicalMap = new Map<string, number>();
+    for (const name of canonicalNames) {
+      const foundSpecs = specs.filter(s => s.name.toLowerCase().trim() === name.toLowerCase().trim());
+      if (foundSpecs.length > 0) {
+        foundSpecs.sort((a, b) => a.id - b.id);
+        canonicalMap.set(name.toLowerCase(), foundSpecs[0].id);
+      }
+    }
+
+    // Map duplicate/old names to canonical IDs
+    const mergeMap: Array<{ from: number; to: number }> = [];
+    const dupIds: number[] = [];
+
+    const oldNameToCanonical: Record<string, string> = {
+      "vitreo-retina": "Vitreo Retina",
+      "pediatric retina": "Pediatric Ophthalmology",
+      "cornea & anterior segment": "Cornea",
+      "refractive surgery": "Phaco Refractive",
+      "ocular surface": "Cornea"
+    };
+
+    for (const s of specs) {
+      const normName = s.name.toLowerCase().trim();
+      const canonicalName = oldNameToCanonical[normName];
+      
+      if (canonicalName) {
+        const toId = canonicalMap.get(canonicalName.toLowerCase());
+        if (toId && toId !== s.id) {
+          mergeMap.push({ from: s.id, to: toId });
+          dupIds.push(s.id);
+        }
+      } else {
+        // If it's a duplicate of a canonical name (same name, higher ID)
+        const matchedCanonicalName = canonicalNames.find(c => c.toLowerCase() === normName);
+        if (matchedCanonicalName) {
+          const toId = canonicalMap.get(normName);
+          if (toId && toId !== s.id) {
+            mergeMap.push({ from: s.id, to: toId });
+            dupIds.push(s.id);
+          }
+        }
+      }
+    }
+
+    if (mergeMap.length > 0) {
+      logger.info(`Found ${mergeMap.length} duplicate/old speciality rows — re-mapping and removing: ${dupIds.join(",")}`);
+      
+      const fkTables = [
+        { table: "candidate_preferences", column: "speciality_id" },
+        { table: "applications",          column: "speciality_id" },
+        { table: "interview_scores",      column: "speciality_id" },
+        { table: "interview_panels",      column: "speciality_id" },
+        { table: "doctor_assignments",    column: "speciality_id" },
+        { table: "allocations",           column: "speciality_id" },
+        { table: "batch_candidates",      column: "speciality_id" },
+        { table: "viva_score_overrides",  column: "speciality_id" },
+      ];
+
+      for (const { from, to } of mergeMap) {
+        for (const { table, column } of fkTables) {
+          try {
+            // Deduplicate unique tables
+            if (table === "candidate_preferences") {
+              await db.execute(sql.raw(`
+                DELETE FROM candidate_preferences 
+                WHERE speciality_id = ${from} 
+                AND candidate_id IN (
+                  SELECT candidate_id FROM candidate_preferences WHERE speciality_id = ${to}
+                )
+              `));
+            } else if (table === "interview_scores") {
+              await db.execute(sql.raw(`
+                DELETE FROM interview_scores 
+                WHERE speciality_id = ${from} 
+                AND (candidate_id, doctor_id) IN (
+                  SELECT candidate_id, doctor_id FROM interview_scores WHERE speciality_id = ${to}
+                )
+              `));
+            } else if (table === "doctor_assignments") {
+              await db.execute(sql.raw(`
+                DELETE FROM doctor_assignments 
+                WHERE speciality_id = ${from} 
+                AND (candidate_id, doctor_id) IN (
+                  SELECT candidate_id, doctor_id FROM doctor_assignments WHERE speciality_id = ${to}
+                )
+              `));
+            } else if (table === "viva_score_overrides") {
+              await db.execute(sql.raw(`
+                DELETE FROM viva_score_overrides 
+                WHERE speciality_id = ${from} 
+                AND candidate_id IN (
+                  SELECT candidate_id FROM viva_score_overrides WHERE speciality_id = ${to}
+                )
+              `));
+            }
+
+            await db.execute(sql.raw(`UPDATE ${table} SET ${column} = ${to} WHERE ${column} = ${from}`));
+          } catch (_) { /* table or column may not exist */ }
+        }
+      }
+
+      // Normalise seat_matrix_entries text field
+      const nameMap: Array<{ old: string; canonical: string }> = [
+        { old: "Vitreo-Retina",            canonical: "Vitreo Retina" },
+        { old: "Pediatric Retina",         canonical: "Pediatric Ophthalmology" },
+        { old: "Cornea & Anterior Segment",canonical: "Cornea" },
+        { old: "Refractive Surgery",       canonical: "Phaco Refractive" },
+        { old: "Ocular Surface",           canonical: "Cornea" },
+      ];
+      for (const { old, canonical } of nameMap) {
+        await db.execute(sql.raw(`UPDATE seat_matrix_entries SET speciality = '${canonical.replace(/'/g, "''")}' WHERE speciality = '${old.replace(/'/g, "''")}'`));
+      }
+
+      // Delete duplicate rows
+      await db.execute(sql.raw(`DELETE FROM specialities WHERE id IN (${dupIds.join(",")})`));
+      logger.info("Dynamic specialities deduplication complete.");
+    } else {
+      logger.info("Specialities already deduplicated — no duplicates found.");
+    }
+  } catch (err: any) {
+    logger.error({ err }, "Dynamic specialities deduplication migration failed (non-fatal)");
+  }
+
+  // --- DATABASE INDEX OPTIMIZATIONS ---
+  try {
+    logger.info("Applying database index optimizations...");
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_interview_scores_candidate_id ON interview_scores(candidate_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_interview_scores_speciality_id ON interview_scores(speciality_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_interview_scores_doctor_id ON interview_scores(doctor_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidate_preferences_candidate_id ON candidate_preferences(candidate_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidate_preferences_speciality_id ON candidate_preferences(speciality_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_applications_candidate_id ON applications(candidate_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_applications_speciality_id ON applications(speciality_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidates_unit_id ON candidates(unit_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidates_status ON candidates(status)`);
+    
+    // Performance indexes for search, ranking, and overrides
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidates_full_name ON candidates(full_name)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_candidates_email ON candidates(email)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_interview_scores_cand_spec ON interview_scores(candidate_id, speciality_id)`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_viva_overrides_cand_spec ON viva_score_overrides(candidate_id, speciality_id)`);
+    
+    logger.info("Database index optimizations applied successfully.");
+  } catch (err: any) {
+    logger.error({ err }, "Failed to apply database index optimizations");
+  }
+
 
   // Start periodic active session cleanup job
   setInterval(async () => {

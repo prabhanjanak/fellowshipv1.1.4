@@ -53,10 +53,15 @@ router.get("/interviews/assignments", requireAuth, requireRole("doctor"), async 
   `)).rows as Array<Record<string, unknown>>;
 
   const scores = await db.select().from(interviewScoresTable).where(
-    and(
-      eq(interviewScoresTable.doctorId, userId),
-      specialityId ? eq(interviewScoresTable.specialityId, specialityId) : sql`speciality_id IS NULL`
-    )
+    specialityId
+      ? and(
+          eq(interviewScoresTable.specialityId, specialityId),
+          sql`doctor_id IN (SELECT doctor_id FROM interview_panel_members WHERE panel_id = ${panelId})`
+        )
+      : and(
+          sql`speciality_id IS NULL`,
+          sql`doctor_id IN (SELECT doctor_id FROM interview_panel_members WHERE panel_id = ${panelId})`
+        )
   );
 
   res.json(queueEntries.map((q) => {
@@ -286,20 +291,28 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
 
   // 1. Identify active panel and its speciality
   const panelQuery = await db.execute(sql`
-    SELECT ip.speciality_id, ip.id as panel_id, ip.is_mind_matter
+    SELECT ip.speciality_id, ip.id as panel_id, ip.is_mind_matter, ipm.marks_entry_enabled
     FROM interview_panel_members ipm
     JOIN interview_panels ip ON ip.id = ipm.panel_id
     WHERE ipm.doctor_id = ${userId} AND ip.is_active = TRUE
     LIMIT 1
   `);
-  const activePanel = panelQuery.rows[0] as { speciality_id: number | null; panel_id: number; is_mind_matter: boolean } | undefined;
+  const activePanel = panelQuery.rows[0] as { speciality_id: number | null; panel_id: number; is_mind_matter: boolean; marks_entry_enabled: boolean } | undefined;
   if (!activePanel) {
     return res.status(403).json({ error: "Access denied. Doctor is not currently active in any panel." });
   }
   const specialityId = activePanel.speciality_id;
   const panelId = activePanel.panel_id;
 
-  // 2. Validate score ceiling based on Mind Matter configuration
+  // 2. STRICT ACCESS CONTROL: Doctor must have marks_entry_enabled = TRUE
+  if (!activePanel.marks_entry_enabled) {
+    return res.status(403).json({
+      error: "Access denied. You do not have marks entry enabled for this panel."
+    });
+  }
+
+  // 3. Validate score ceiling:
+  //    Mind Matter panel max is 10. Regular specialty panel max is 50.
   const maxScore = activePanel.is_mind_matter ? 10 : 50;
   if (score < 0 || score > maxScore) {
     return res.status(400).json({ error: `Score must be between 0 and ${maxScore} marks.` });
@@ -308,16 +321,44 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
   const existing = await db.select().from(interviewScoresTable).where(
     and(
       eq(interviewScoresTable.candidateId, candidateId),
-      eq(interviewScoresTable.doctorId, userId),
-      specialityId ? eq(interviewScoresTable.specialityId, specialityId) : sql`speciality_id IS NULL`
+      specialityId
+        ? and(
+            eq(interviewScoresTable.doctorId, userId),
+            eq(interviewScoresTable.specialityId, specialityId)
+          )
+        : sql`speciality_id IS NULL`
     ),
   );
   let row;
+  const now = new Date();
   if (existing.length > 0) {
-    [row] = await db.update(interviewScoresTable).set({ score, remarks: remarks ?? null, submittedAt: new Date() })
+    [row] = await db.update(interviewScoresTable).set({ 
+      score, 
+      remarks: remarks ?? null, 
+      doctorId: userId, 
+      submittedAt: now,
+      lastModifiedBy: userId,
+      lastModifiedAt: now
+    })
       .where(eq(interviewScoresTable.id, existing[0]!.id)).returning();
   } else {
-    [row] = await db.insert(interviewScoresTable).values({ candidateId, doctorId: userId, specialityId, score, remarks: remarks ?? null }).returning();
+    [row] = await db.insert(interviewScoresTable).values({ 
+      candidateId, 
+      doctorId: userId, 
+      specialityId, 
+      score, 
+      remarks: remarks ?? null,
+      enteredBy: userId,
+      enteredAt: now,
+      lastModifiedBy: userId,
+      lastModifiedAt: now
+    }).returning();
+  }
+
+  // Update candidatesTable.psychometricScore if this is a Mind Matter panel score
+  if (activePanel.is_mind_matter) {
+    await db.update(candidatesTable).set({ psychometricScore: String(score) })
+      .where(eq(candidatesTable.id, candidateId));
   }
   if (!row) { res.status(500).json({ error: "Failed to submit score" }); return; }
 
@@ -393,9 +434,15 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
     WHERE doctor_id = ${userId}
   `);
 
-  // 3. Shared Panel Logic: Check if ALL panel members have scored this candidate
-  const members = (await db.execute(sql`
+  // 3. Panel completion check: ALL marks_entry_enabled doctors must score before advancing queue.
+  //    Doctors without marks_entry_enabled are observers — they do not block progress.
+  const allMembersForRelease = (await db.execute(sql`
     SELECT doctor_id FROM interview_panel_members WHERE panel_id = ${panelId}
+  `)).rows as Array<{ doctor_id: number }>;
+
+  const enabledMembers = (await db.execute(sql`
+    SELECT doctor_id FROM interview_panel_members
+    WHERE panel_id = ${panelId} AND marks_entry_enabled = TRUE
   `)).rows as Array<{ doctor_id: number }>;
 
   const scoresOnSpec = await db.select().from(interviewScoresTable).where(
@@ -405,18 +452,21 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
     )
   );
 
-  const doctorsInPanel = new Set(members.map(m => m.doctor_id));
-  const panelScores = scoresOnSpec.filter(s => doctorsInPanel.has(s.doctorId));
+  // Which enabled doctors have submitted a score for this candidate?
+  const enabledDoctorIds = new Set(enabledMembers.map(m => m.doctor_id));
+  const enabledScores = scoresOnSpec.filter(s => enabledDoctorIds.has(s.doctorId));
 
-  // If everyone has graded, mark queue position done and auto-call next candidate
-  if (panelScores.length >= members.length) {
+  // All enabled doctors scored → advance the queue
+  const allEnabledScored = enabledMembers.length > 0 && enabledScores.length >= enabledMembers.length;
+
+  if (allEnabledScored) {
     await db.execute(sql`
       UPDATE panel_queue SET status = 'done'
       WHERE panel_id = ${panelId} AND candidate_id = ${candidateId}
     `);
 
     // Release engagement status for ALL members on this panel
-    for (const m of members) {
+    for (const m of allMembersForRelease) {
       await db.execute(sql`
         UPDATE doctor_panel_status SET is_engaged = FALSE, current_candidate_id = NULL, updated_at = NOW()
         WHERE doctor_id = ${m.doctor_id}
@@ -437,7 +487,7 @@ router.post("/interviews/scores", requireAuth, requireRole("doctor"), async (req
         UPDATE panel_queue SET status = 'in_progress', called_at = NOW()
         WHERE panel_id = ${panelId} AND candidate_id = ${nextId}
       `);
-      for (const m of members) {
+      for (const m of allMembersForRelease) {
         await db.execute(sql`
           INSERT INTO doctor_panel_status (doctor_id, is_engaged, engaged_since, current_candidate_id, updated_at)
           VALUES (${m.doctor_id}, TRUE, NOW(), ${nextId}, NOW())
@@ -941,4 +991,187 @@ router.get("/interviews/scores/specialty-export", requireAuth, requireRole("supe
   }
 });
 
+// GET /interviews/viva-summary/:candidateId
+router.get("/interviews/viva-summary/:candidateId", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const candidateId = Number(req.params.candidateId);
+    const specialityIdRaw = req.query.specialityId;
+    const specialityId = specialityIdRaw ? Number(specialityIdRaw) : null;
+
+    if (!specialityId) {
+      res.status(400).json({ error: "specialityId query parameter is required" });
+      return;
+    }
+
+    // 1. Get all interview panels for this speciality
+    const panels = (await db.execute(sql`
+      SELECT id, name, room_number FROM interview_panels 
+      WHERE speciality_id = ${specialityId} AND is_mind_matter = FALSE
+    `)).rows as Array<{ id: number; name: string; room_number: string }>;
+
+    // 2. Get marks_entry_enabled panel members
+    const panelIds = panels.map(p => p.id);
+    let enabledMembers: Array<{ doctor_id: number; doctor_name: string; panel_name: string }> = [];
+    if (panelIds.length > 0) {
+      enabledMembers = (await db.execute(sql.raw(`
+        SELECT ipm.doctor_id, u.full_name as doctor_name, ip.name as panel_name
+        FROM interview_panel_members ipm
+        JOIN users u ON u.id = ipm.doctor_id
+        JOIN interview_panels ip ON ip.id = ipm.panel_id
+        WHERE ipm.panel_id IN (${panelIds.join(",")}) AND ipm.marks_entry_enabled = TRUE
+      `))).rows as any;
+    }
+
+    // 3. Get all scores submitted for this candidate & speciality
+    const scores = await db.select().from(interviewScoresTable).where(
+      and(
+        eq(interviewScoresTable.candidateId, candidateId),
+        eq(interviewScoresTable.specialityId, specialityId)
+      )
+    );
+
+    // 4. Get active override if any
+    const { vivaScoreOverridesTable } = await import("@workspace/db");
+    const [override] = await db.select().from(vivaScoreOverridesTable).where(
+      and(
+        eq(vivaScoreOverridesTable.candidateId, candidateId),
+        eq(vivaScoreOverridesTable.specialityId, specialityId)
+      )
+    );
+
+    // 5. Build doctor score breakdown
+    const doctors = enabledMembers.map(m => {
+      const sc = scores.find(s => s.doctorId === m.doctor_id);
+      return {
+        doctorId: m.doctor_id,
+        doctorName: m.doctor_name,
+        panelName: m.panel_name,
+        score: sc ? sc.score : null,
+        remarks: sc ? sc.remarks : null,
+        submittedAt: sc ? sc.submittedAt.toISOString() : null,
+        marksEntryEnabled: true
+      };
+    });
+
+    const submittedScores = doctors.filter(d => d.score !== null) as Array<{ score: number }>;
+    const calculatedAverage = submittedScores.length > 0
+      ? Number((submittedScores.reduce((sum, d) => sum + d.score, 0) / submittedScores.length).toFixed(2))
+      : 0;
+
+    const pendingDoctors = doctors.filter(d => d.score === null).map(d => d.doctorName);
+
+    let overridingUser = null;
+    if (override) {
+      const [u] = await db.select().from(usersTable).where(eq(usersTable.id, override.overriddenBy));
+      overridingUser = u ? u.fullName : `#${override.overriddenBy}`;
+    }
+
+    res.json({
+      candidateId,
+      specialityId,
+      doctors,
+      calculatedAverage,
+      pendingDoctors,
+      override: override ? {
+        id: override.id,
+        overrideScore: override.overrideScore,
+        overrideReason: override.overrideReason,
+        overriddenBy: overridingUser,
+        overriddenAt: override.overriddenAt.toISOString()
+      } : null
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /interviews/viva-override
+router.post("/interviews/viva-override", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const { candidateId, specialityId, overrideScore, overrideReason } = req.body as {
+      candidateId: number;
+      specialityId: number;
+      overrideScore: number;
+      overrideReason: string;
+    };
+
+    if (!candidateId || !specialityId || overrideScore == null) {
+      res.status(400).json({ error: "candidateId, specialityId, and overrideScore are required" });
+      return;
+    }
+
+    if (overrideScore < 0 || overrideScore > 50) {
+      res.status(400).json({ error: "Override score must be between 0 and 50" });
+      return;
+    }
+
+    const { vivaScoreOverridesTable } = await import("@workspace/db");
+
+    // Upsert the override score record
+    const existing = await db.select().from(vivaScoreOverridesTable).where(
+      and(
+        eq(vivaScoreOverridesTable.candidateId, candidateId),
+        eq(vivaScoreOverridesTable.specialityId, specialityId)
+      )
+    );
+
+    const now = new Date();
+    let row;
+    if (existing.length > 0) {
+      [row] = await db.update(vivaScoreOverridesTable)
+        .set({
+          overrideScore,
+          overrideReason: overrideReason || null,
+          overriddenBy: req.user!.userId,
+          overriddenAt: now
+        })
+        .where(eq(vivaScoreOverridesTable.id, existing[0]!.id))
+        .returning();
+    } else {
+      [row] = await db.insert(vivaScoreOverridesTable).values({
+        candidateId,
+        specialityId,
+        overrideScore,
+        overrideReason: overrideReason || null,
+        overriddenBy: req.user!.userId,
+        overriddenAt: now
+      }).returning();
+    }
+
+    // Recalculate status so ranks & scoring are updated
+    const { recalculateCandidateStatus } = await import("./candidates");
+    await recalculateCandidateStatus(candidateId);
+
+    res.json(row);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /interviews/viva-override/:candidateId/:specialityId
+router.delete("/interviews/viva-override/:candidateId/:specialityId", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator"), async (req, res) => {
+  try {
+    const candidateId = Number(req.params.candidateId);
+    const specialityId = Number(req.params.specialityId);
+
+    const { vivaScoreOverridesTable } = await import("@workspace/db");
+    
+    await db.delete(vivaScoreOverridesTable).where(
+      and(
+        eq(vivaScoreOverridesTable.candidateId, candidateId),
+        eq(vivaScoreOverridesTable.specialityId, specialityId)
+      )
+    );
+
+    // Recalculate status
+    const { recalculateCandidateStatus } = await import("./candidates");
+    await recalculateCandidateStatus(candidateId);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+

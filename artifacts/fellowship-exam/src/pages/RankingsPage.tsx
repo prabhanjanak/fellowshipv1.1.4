@@ -65,13 +65,6 @@ export default function RankingsPage() {
 
   const [selectedProgram, setSelectedProgram] = useState<string>("");
   const [selectedTab, setSelectedTab] = useState<string>("");
-  const [isWeightModalOpen, setIsWeightModalOpen] = useState(false);
-
-  const [weightMcq, setWeightMcq] = useState("60");
-  const [weightPsy, setWeightPsy] = useState("10");
-  const [weightInt, setWeightInt] = useState("30");
-
-  const canEdit = ["super_admin", "program_admin", "central_exam_coordinator"].includes(user?.role ?? "");
 
   // Fetch Programs
   const { data: programs = [] } = useQuery<Program[]>({
@@ -100,12 +93,6 @@ export default function RankingsPage() {
     }
   }, [specialities, selectedTab]);
 
-  // Fetch Weightages config
-  const { data: weights, refetch: refetchWeights } = useQuery<WeightConfig>({
-    queryKey: ["rankings-weights"],
-    queryFn: () => api.get<WeightConfig>("/rankings/weights"),
-  });
-
   // Fetch Rankings based on selectedProgram and active worksheet/specialty tab
   const activeSpecialityId = selectedTab;
   const { data: rankings = [], isLoading, refetch: refetchRankings } = useQuery<CandidateRank[]>({
@@ -125,52 +112,6 @@ export default function RankingsPage() {
     const rankB = b.specialityRank ?? b.rank ?? 99999;
     return rankA - rankB;
   });
-
-  // Pre-fill weight settings in modal
-  useEffect(() => {
-    if (weights) {
-      setWeightMcq(String(weights.mcq));
-      setWeightPsy(String(weights.psychometric));
-      setWeightInt(String(weights.interview));
-    }
-  }, [weights, isWeightModalOpen]);
-
-  // Mutation to save weights
-  const saveWeightsMutation = useMutation({
-    mutationFn: (newWeights: WeightConfig) => api.post("/rankings/weights", newWeights),
-    onSuccess: () => {
-      toast({ title: "Merit Weights Updated Successfully", description: "All aggregate ranks and final merit scores have been recomputed dynamically." });
-      setIsWeightModalOpen(false);
-      qc.invalidateQueries({ queryKey: ["rankings"] });
-      refetchWeights();
-    },
-    onError: (e: Error) => {
-      toast({ title: "Update Failed", description: e.message, variant: "destructive" });
-    }
-  });
-
-  const handleSaveWeights = () => {
-    const mcq = Number(weightMcq);
-    const psy = Number(weightPsy);
-    const int = Number(weightInt);
-
-    if (isNaN(mcq) || isNaN(psy) || isNaN(int)) {
-      toast({ title: "Invalid Inputs", description: "Marks values must be valid integers", variant: "destructive" });
-      return;
-    }
-
-    if (mcq < 0 || psy < 0 || int < 0) {
-      toast({ title: "Invalid Marks", description: "Marks values cannot be negative", variant: "destructive" });
-      return;
-    }
-
-    if (Math.abs(mcq + psy + int - 110) > 0.01) {
-      toast({ title: "Invalid Aggregate", description: "MCQ + Mind Matters + VIVA marks must sum to exactly 110", variant: "destructive" });
-      return;
-    }
-
-    saveWeightsMutation.mutate({ mcq, psychometric: psy, interview: int });
-  };
 
   const handleExportExcel = () => {
     const token = localStorage.getItem("fellowship_token");
@@ -193,18 +134,10 @@ export default function RankingsPage() {
             </div>
             <h1 className="text-4xl font-extrabold tracking-tight">Merit Rankings</h1>
             <p className="text-indigo-100/80 max-w-md">
-              Review and manage fellowship candidate standings. Recompute weighted aggregates, filter by specialization worksheets, and generate sub-specialty ranking books.
+              Review and manage fellowship candidate standings. Filter by specialization worksheets and generate sub-specialty ranking books.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {canEdit && (
-              <Button 
-                onClick={() => setIsWeightModalOpen(true)}
-                className="bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-2xl h-12 px-6 font-bold shadow-xl gap-2 backdrop-blur-md"
-              >
-                <Sliders className="h-4 w-4 text-purple-200" /> Configure Max Marks
-              </Button>
-            )}
             {selectedProgram && rankings.length > 0 && (
               <Button 
                 onClick={handleExportExcel}
@@ -304,16 +237,13 @@ export default function RankingsPage() {
                       <thead>
                         <tr className="bg-slate-50 border-b text-xs uppercase font-bold text-slate-400 text-center">
                           <th className="px-4 py-3.5 text-left w-16">Rank</th>
-                          <th className="px-4 py-3.5 text-left min-w-[200px]">Candidate Details</th>
-                          <th className="px-4 py-3.5 text-center">Spec Rank</th>
-                          <th className="px-4 py-3.5 text-center">Segment Rank</th>
-                          <th className="px-4 py-3.5 text-left">Preferred Location</th>
-                          <th className="px-4 py-3.5 text-left">Allocated Seat</th>
-                          <th className="px-3 py-3.5 text-right w-20">MCQ ({weights ? weights.mcq : 50})</th>
-                          <th className="px-3 py-3.5 text-right w-20">Mind Matters ({weights ? weights.psychometric : 10})</th>
-                          <th className="px-3 py-3.5 text-right w-20">VIVA ({weights ? weights.interview : 50})</th>
-                          <th className="px-4 py-3.5 text-right w-24 bg-slate-50/80">Total Marks (110)</th>
-                          <th className="px-4 py-3.5 text-center w-24">Counselling Status</th>
+                          <th className="px-4 py-3.5 text-left">Application No</th>
+                          <th className="px-4 py-3.5 text-left">Student Name</th>
+                          <th className="px-4 py-3.5 text-left">Speciality</th>
+                          <th className="px-3 py-3.5 text-right w-24">MCQ</th>
+                          <th className="px-3 py-3.5 text-right w-24">Viva</th>
+                          <th className="px-3 py-3.5 text-right w-24">Mind Matters</th>
+                          <th className="px-4 py-3.5 text-right w-32 bg-slate-50/80">Total</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -342,64 +272,23 @@ export default function RankingsPage() {
                                   <span className="font-bold text-slate-400 font-mono">#{currentRank}</span>
                                 )}
                               </td>
-                              <td className="px-4 py-4 text-left">
-                                <p className="font-bold text-slate-900 text-sm leading-tight mb-0.5">{r.fullName}</p>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black text-slate-400 font-mono tracking-wide">{r.candidateCode}</span>
-                                </div>
+                              <td className="px-4 py-4 text-left font-semibold font-mono text-xs text-slate-600">
+                                {r.candidateCode}
                               </td>
-
-                              <td className="px-4 py-4 text-center font-bold text-indigo-600 font-mono">
-                                {r.specialityRank ? `#${r.specialityRank}` : "—"}
+                              <td className="px-4 py-4 text-left font-bold text-slate-900 text-sm">
+                                {r.fullName}
                               </td>
-                              <td className="px-4 py-4 text-center text-xs text-slate-500 font-mono">
-                                {r.segmentRank ? `#${r.segmentRank}` : "—"}
-                              </td>
-
-                              <td className="px-4 py-4 text-left">
-                                {r.preferredLocations && r.preferredLocations.length > 0 ? (
-                                  <div className="flex flex-wrap gap-1">
-                                    {r.preferredLocations.map((loc) => (
-                                      <Badge key={loc} variant="secondary" className="text-[10px] font-bold bg-indigo-50 text-indigo-700 border-indigo-100">
-                                        {loc}
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className="text-slate-300 text-xs">—</span>
-                                )}
-                              </td>
-
-                              <td className="px-4 py-4 text-left">
-                                {r.unitName ? (
-                                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
-                                    <Sparkles className="h-3 w-3 text-indigo-500" />
-                                    <span>{r.unitName}</span>
-                                  </div>
-                                ) : (
-                                  <span className="text-slate-300 text-xs">—</span>
-                                )}
+                              <td className="px-4 py-4 text-left text-slate-700 text-xs font-semibold">
+                                {specialities.find(s => String(s.id) === selectedTab)?.name || r.topPreference || "—"}
                               </td>
                               <td className="px-3 py-4 text-right tabular-nums text-slate-600 font-mono text-xs">{fmt(r.mcqScore)}</td>
-                              <td className="px-3 py-4 text-right tabular-nums text-slate-600 font-mono text-xs">{fmt(r.psychometricScore)}</td>
                               <td className="px-3 py-4 text-right tabular-nums text-slate-600 font-mono text-xs">{fmt(r.interviewScore)}</td>
+                              <td className="px-3 py-4 text-right tabular-nums text-slate-600 font-mono text-xs">{fmt(r.psychometricScore)}</td>
                               
-                              <td className="px-4 py-4 text-right bg-slate-50/30 border-x">
+                              <td className="px-4 py-4 text-right bg-slate-50/30 border-l">
                                 <Badge className="bg-indigo-600 text-white font-black text-xs h-7 px-3.5 shadow-sm border-none font-mono">
                                   {r.totalScore.toFixed(2)}
                                 </Badge>
-                              </td>
-                              
-                              <td className="px-4 py-4 text-center">
-                                {r.status ? (
-                                  <Badge variant="outline" className={`text-[10px] font-black uppercase tracking-wider px-3 h-6 rounded-full border-2 ${statusColors[r.status] ?? ""}`}>
-                                    {r.status.replace(/_/g, " ")}
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[10px] font-black uppercase tracking-wider px-3 h-6 rounded-full border-2 bg-slate-50 text-slate-400">
-                                    PENDING
-                                  </Badge>
-                                )}
                               </td>
                             </tr>
                           );
@@ -413,89 +302,6 @@ export default function RankingsPage() {
           </Tabs>
         </div>
       )}
-
-      {/* Dynamic Weightages Configuration Modal */}
-      <Dialog open={isWeightModalOpen} onOpenChange={setIsWeightModalOpen}>
-        <DialogContent className="max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 border-none shadow-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black uppercase tracking-widest text-slate-900 flex items-center gap-2">
-              <Sliders className="h-5 w-5 text-purple-600 animate-pulse" />
-              Max Marks Setup
-            </DialogTitle>
-            <DialogDescription className="text-xs text-slate-400 uppercase tracking-wider font-bold">
-              Adjust absolute marks parameters for merit rankings and seat allocation
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6 py-4">
-            <div className="bg-purple-50 rounded-2xl p-4 border border-purple-100 flex items-center gap-3">
-              <CheckCircle2 className="h-5 w-5 text-purple-500 shrink-0" />
-              <p className="text-xs text-purple-900 font-bold leading-relaxed uppercase">
-                The total sum of MCQ, Mind Matters, and VIVA marks must equal exactly 110. Changing marks will scale all applicant scores atomically.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">MCQ Max Marks</Label>
-                <Input 
-                  type="number"
-                  value={weightMcq}
-                  onChange={(e) => setWeightMcq(e.target.value)}
-                  className="h-12 text-center text-sm font-black border-2 rounded-xl focus:ring-purple-500 focus:border-purple-500 font-mono"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Mind Matters</Label>
-                <Input 
-                  type="number"
-                  value={weightPsy}
-                  onChange={(e) => setWeightPsy(e.target.value)}
-                  className="h-12 text-center text-sm font-black border-2 rounded-xl focus:ring-purple-500 focus:border-purple-500 font-mono"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">VIVA Marks</Label>
-                <Input 
-                  type="number"
-                  value={weightInt}
-                  onChange={(e) => setWeightInt(e.target.value)}
-                  className="h-12 text-center text-sm font-black border-2 rounded-xl focus:ring-purple-500 focus:border-purple-500 font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Sum validation display */}
-            {(() => {
-              const sum = (Number(weightMcq) || 0) + (Number(weightPsy) || 0) + (Number(weightInt) || 0);
-              const isValid = Math.abs(sum - 110) < 0.01;
-              return (
-                <div className={`p-3.5 rounded-xl border text-center font-bold text-xs uppercase tracking-widest ${
-                  isValid ? "bg-emerald-50 border-emerald-100 text-emerald-700" : "bg-rose-50 border-rose-100 text-rose-700"
-                }`}>
-                  Current Aggregate Sum: <span className="font-mono">{sum}</span> {isValid ? "— VALID PROTOCOL" : "— SUM MUST EQUAL 110"}
-                </div>
-              );
-            })()}
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" className="rounded-xl h-11 text-xs font-bold uppercase" onClick={() => setIsWeightModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button 
-              className="rounded-xl h-11 bg-slate-900 hover:bg-purple-700 text-white font-bold text-xs uppercase" 
-              onClick={handleSaveWeights}
-              disabled={saveWeightsMutation.isPending}
-            >
-              {saveWeightsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
-              Commit Setup Settings
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

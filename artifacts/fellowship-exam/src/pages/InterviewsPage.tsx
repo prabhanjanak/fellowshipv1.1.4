@@ -61,7 +61,7 @@ interface PanelEntry {
   updatedAt: string;
 }
 
-interface PanelMember { doctorId: number; doctorName: string; doctorEmail: string; isMain: boolean; }
+interface PanelMember { doctorId: number; doctorName: string; doctorEmail: string; isMain: boolean; marksEntryEnabled?: boolean; }
 interface Panel {
   id: number; name: string; roomNumber: string; programId: number | null;
   specialityId?: number | null;
@@ -91,11 +91,12 @@ export default function InterviewsPage() {
 
 /* ─── Doctor View ─── */
 function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/use-toast").useToast>["toast"]; qc: ReturnType<typeof useQueryClient> }) {
-  const [scoreOpen, setScoreOpen] = useState<DoctorAssignment | null>(null);
   const [dossierOpen, setDossierOpen] = useState<DoctorAssignment | null>(null);
+  const [scoreOpen, setScoreOpen] = useState<DoctorAssignment | null>(null);
+  const [activeDossierTab, setActiveDossierTab] = useState<"profile" | "pdf" | "lors" | "docs">("profile");
+  const [searchTerm, setSearchTerm] = useState("");
   const [score, setScore] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [activeDossierTab, setActiveDossierTab] = useState<"profile" | "pdf" | "lors" | "docs">("profile");
 
   const { data: assignments = [] } = useQuery<DoctorAssignment[]>({
     queryKey: ["doctor-assignments"],
@@ -104,9 +105,9 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
   });
 
   const { data: candDetails, isLoading: candLoading } = useQuery<any>({
-    queryKey: ["candidate-details", scoreOpen?.candidateId || dossierOpen?.candidateId],
-    queryFn: () => api.get(`/candidates/${scoreOpen?.candidateId || dossierOpen?.candidateId}`),
-    enabled: !!(scoreOpen?.candidateId || dossierOpen?.candidateId),
+    queryKey: ["candidate-details", dossierOpen?.candidateId ?? scoreOpen?.candidateId],
+    queryFn: () => api.get(`/candidates/${dossierOpen?.candidateId ?? scoreOpen?.candidateId}`),
+    enabled: !!(dossierOpen?.candidateId ?? scoreOpen?.candidateId),
   });
 
   const { data: specialities = [] } = useQuery<{ id: number; name: string; code: string }[]>({
@@ -114,16 +115,23 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
     queryFn: () => api.get("/specialities"),
   });
 
+  // myStatus now includes isMindMatter directly from /panel/my-status
   const { data: myStatus } = useQuery<{
     isEngaged: boolean; currentCandidateId: number | null;
     currentCandidateName: string | null; currentCandidateCode: string | null;
-    panelName: string | null; roomNumber: string | null;
+    panelId: number | null; panelName: string | null; roomNumber: string | null;
     specialityId: number | null; specialityName: string | null;
+    isMindMatter: boolean;
+    isMain?: boolean;
+    marksEntryEnabled?: boolean;
   }>({
     queryKey: ["panel-my-status"],
     queryFn: () => api.get("/panel/my-status"),
     refetchInterval: 5000,
   });
+
+  // True only when the doctor is assigned to an active Mind Matter panel
+  const isMindMatterDoctor = myStatus?.isMindMatter === true;
 
   const toggleStatus = useMutation({
     mutationFn: (body: { isEngaged: boolean; candidateId?: number | null }) => api.patch("/panel/status", body),
@@ -134,11 +142,30 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
   const submitScore = useMutation({
     mutationFn: ({ candidateId, score, remarks }: { candidateId: number; score: number; remarks: string }) =>
       api.post("/interviews/scores", { candidateId, score, remarks }),
-    onSuccess: () => { toast({ title: "Score submitted" }); qc.invalidateQueries({ queryKey: ["doctor-assignments"] }); setScoreOpen(null); },
-    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onSuccess: (_data, variables) => {
+      const panelType = isMindMatterDoctor ? "Mind Matter" : "VIVA";
+      const maxVal = isMindMatterDoctor ? 10 : 50;
+      const candidateName = scoreOpen?.candidateName ?? dossierOpen?.candidateName ?? "Candidate";
+      toast({ title: `${panelType} Score Saved`, description: `${candidateName} — ${variables.score}/${maxVal} recorded successfully.` });
+      qc.invalidateQueries({ queryKey: ["doctor-assignments"] });
+      setScoreOpen(null);
+      setScore("");
+      setRemarks("");
+    },
+    onError: (e: any) => {
+      const msg = e.response?.data?.error ?? e.message;
+      toast({ title: "Failed to submit score", description: msg, variant: "destructive" });
+    },
   });
 
   const isEngaged = myStatus?.isEngaged ?? false;
+
+  // Filter assignments by search term
+  const filteredAssignments = assignments.filter(a =>
+    a.candidateName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    a.candidateCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (a.specialityName ?? "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -155,6 +182,9 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                   Panel: <strong>{myStatus.panelName}</strong> · Room {myStatus.roomNumber}
                   {myStatus.specialityName && (
                     <span className="ml-1 text-primary font-medium">({myStatus.specialityName})</span>
+                  )}
+                  {isMindMatterDoctor && (
+                    <Badge className="ml-2 text-[9px] bg-amber-100 text-amber-700 border-amber-200 h-4 px-1.5 font-black uppercase">Mind Matter</Badge>
                   )}
                 </p>
               )}
@@ -179,20 +209,47 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold font-mono">My Interview Assignments</h1>
-          {myStatus?.specialityName && (
-            <p className="text-sm font-semibold text-primary mt-1">Specialization Panel: {myStatus.specialityName}</p>
+          {isMindMatterDoctor ? (
+            <Badge className={`mt-1.5 border text-[10px] font-black uppercase tracking-wider px-2 py-0.5 ${
+              myStatus?.marksEntryEnabled 
+                ? "bg-amber-100 text-amber-800 border-amber-300" 
+                : "bg-slate-100 text-slate-800 border-slate-350"
+            }`}>
+              {myStatus?.marksEntryEnabled 
+                ? "Mind Matter Panel — Score Entry Enabled (Max 10 Marks)" 
+                : "Mind Matter Panel — View Only"}
+            </Badge>
+          ) : (
+            <Badge className={`mt-1.5 border text-[10px] font-black uppercase tracking-wider px-2 py-0.5 ${
+              myStatus?.marksEntryEnabled 
+                ? "bg-emerald-100 text-emerald-800 border-emerald-300" 
+                : "bg-slate-100 text-slate-800 border-slate-350"
+            }`}>
+              {myStatus?.marksEntryEnabled 
+                ? "VIVA Panel — Score Entry Enabled (Max 50 Marks)" 
+                : "VIVA Panel — View Only"}
+            </Badge>
           )}
-          <p className="text-muted-foreground text-sm mt-1">{assignments.length} candidates assigned</p>
+          <p className="text-muted-foreground text-sm mt-1">{assignments.length} candidates assigned · {filteredAssignments.length} shown</p>
         </div>
-        {assignments.length > 0 && (
-          <Button 
-            variant="outline"
-            onClick={() => window.open(`/api/interviews/my-scores/export?token=${localStorage.getItem("fellowship_token")}`, "_blank")} 
-            className="gap-2 border-indigo-200 text-indigo-750 hover:bg-indigo-50 font-bold h-10 px-4 rounded-xl text-xs uppercase tracking-wider shadow-sm"
-          >
-            <FileText className="h-4 w-4 text-indigo-500" /> Download My Evaluations
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Search Box */}
+          <Input
+            placeholder="Search by name, code..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-9 w-52 text-xs rounded-xl border-slate-200 bg-slate-50 font-semibold"
+          />
+          {assignments.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => window.open(`/api/interviews/my-scores/export?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+              className="gap-2 border-indigo-200 text-indigo-750 hover:bg-indigo-50 font-bold h-9 px-4 rounded-xl text-xs uppercase tracking-wider shadow-sm"
+            >
+              <FileText className="h-4 w-4 text-indigo-500" /> Export
+            </Button>
+          )}
+        </div>
       </div>
 
       {assignments.length === 0 ? (
@@ -215,7 +272,13 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                   </tr>
                 </thead>
                 <tbody>
-                  {assignments.map((a) => (
+                  {filteredAssignments.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="text-center py-10 text-muted-foreground text-xs font-semibold">
+                        No candidates match your search.
+                      </td>
+                    </tr>
+                  ) : filteredAssignments.map((a) => (
                     <tr key={a.id} className="border-b last:border-0 hover:bg-muted/20">
                       <td className="px-4 py-3 font-medium">
                         <div>
@@ -237,13 +300,38 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={a.status === "completed" ? "default" : "secondary"} className="text-[10px]">
-                          {a.existingScore ? `Score: ${a.existingScore.score}` : a.status}
+                          {a.existingScore 
+                            ? `Score: ${a.existingScore.score}/${isMindMatterDoctor ? 10 : 50}` 
+                            : a.status}
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Button variant="outline" size="sm" onClick={() => { setScoreOpen(a); setScore(a.existingScore?.score?.toString() ?? ""); setRemarks(a.existingScore?.remarks ?? ""); }}>
-                          {a.existingScore ? "Edit Score" : "Submit Score"}
-                        </Button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button variant="outline" size="sm" onClick={() => {
+                              setDossierOpen(a);
+                              setScore(a.existingScore?.score?.toString() ?? "");
+                              setRemarks(a.existingScore?.remarks ?? "");
+                              setActiveDossierTab("profile");
+                            }}>
+                            View Details
+                          </Button>
+                          {myStatus?.marksEntryEnabled && (
+                            <Button
+                              size="sm"
+                              className={a.existingScore
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
+                                : "bg-amber-600 hover:bg-amber-700 text-white gap-1"}
+                              onClick={() => {
+                                setScoreOpen(a);
+                                setScore(a.existingScore?.score?.toString() ?? "");
+                                setRemarks(a.existingScore?.remarks ?? "");
+                              }}
+                            >
+                              <Star className="h-3.5 w-3.5" />
+                              {a.existingScore ? "Edit Score" : "Enter Score"}
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -254,355 +342,80 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
         </Card>
       )}
 
-      <Dialog open={!!scoreOpen} onOpenChange={() => { setScoreOpen(null); setActiveDossierTab("profile"); }}>
-        <DialogContent className="max-w-5xl w-[90vw] p-0 rounded-3xl overflow-hidden border-none bg-white shadow-2xl">
-          <DialogHeader className="bg-slate-900 text-white p-6 shrink-0 border-b border-white/5 flex flex-row items-center justify-between">
-            <div>
-              <DialogTitle className="text-lg font-black uppercase tracking-widest text-white flex items-center gap-2">
-                <Stethoscope className="h-5 w-5 text-indigo-400" />
-                Clinical Evaluation Station — {scoreOpen?.candidateName}
-              </DialogTitle>
-              {scoreOpen?.specialityName && (
-                <Badge variant="outline" className="mt-2 text-[10px] font-black uppercase text-indigo-200 border-indigo-500/30 bg-indigo-500/10 h-6 px-3">
-                  Specialization Panel: {scoreOpen.specialityName}
-                </Badge>
-              )}
-            </div>
-          </DialogHeader>
-
-          {scoreOpen && (
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-0 h-[70vh]">
-              {/* Left Column: Comprehensive Tabbed Dossier View with Lazy Loading */}
-              <div className="md:col-span-3 border-r bg-slate-50 flex flex-col p-4 space-y-3 overflow-hidden">
-                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b pb-2">
-                  <div className="flex gap-1.5 flex-wrap">
-                    {[
-                      { id: "profile" as const, label: "Profile" },
-                      { id: "pdf" as const, label: "Application Form" },
-                      { id: "lors" as const, label: "LORs" },
-                      { id: "docs" as const, label: "Supporting Documents" }
-                    ].map(tab => (
-                      <Button
-                        key={tab.id}
-                        variant={activeDossierTab === tab.id ? "default" : "ghost"}
-                        size="sm"
-                        onClick={() => setActiveDossierTab(tab.id)}
-                        className={`h-7 px-3 text-[10px] font-black uppercase tracking-wider rounded-lg border-none ${activeDossierTab === tab.id ? "bg-slate-950 text-white hover:bg-slate-900" : "text-slate-500 hover:bg-slate-200"}`}
-                      >
-                        {tab.label}
-                      </Button>
-                    ))}
-                  </div>
-                  <Badge variant="outline" className="text-[9px] font-black uppercase bg-slate-100 text-slate-500 border-slate-250 h-5 self-start">
-                    Code: {scoreOpen.candidateCode}
-                  </Badge>
-                </div>
-
-                <div className="flex-1 border border-slate-200/85 rounded-2xl overflow-y-auto bg-white shadow-sm p-4 relative">
-                  {candLoading ? (
-                    <div className="flex items-center justify-center h-full text-slate-450 gap-2 font-bold text-sm">
-                      <Loader2 className="h-4 w-4 animate-spin text-orange-500" />
-                      Loading dossiers...
-                    </div>
-                  ) : (
-                    <>
-                      {/* PROFILE TAB */}
-                      {activeDossierTab === "profile" && (
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-5 flex-wrap sm:flex-nowrap border-b pb-4">
-                            <div className="h-24 w-24 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center font-black text-4xl text-orange-600 shadow-sm shrink-0 overflow-hidden relative">
-                              {(() => {
-                                const photoDoc = candDetails?.documents?.find((d: any) => 
-                                  d.docType?.toLowerCase().includes("photo") || 
-                                  d.docType?.toLowerCase().includes("profile") ||
-                                  d.docType?.toLowerCase().includes("picture")
-                                );
-                                if (photoDoc) {
-                                  const token = localStorage.getItem("fellowship_token");
-                                  const cleanPhotoPath = getCleanObjectPath(photoDoc.fileUrl);
-                                  const photoSrc = cleanPhotoPath
-                                    ? `/api/storage${cleanPhotoPath}?token=${token}`
-                                    : (photoDoc.fileUrl || `/api/documents/${photoDoc.id}`);
-                                  return <img src={photoSrc} alt="Candidate Photo" className="h-full w-full object-cover" />;
-                                }
-                                return scoreOpen.candidateName.charAt(0).toUpperCase();
-                              })()}
-                            </div>
-                            <div className="space-y-1">
-                              <h3 className="text-xl font-black text-slate-900 leading-tight">{candDetails?.fullName}</h3>
-                              <p className="text-xs font-mono font-bold text-slate-400">{candDetails?.candidateCode}</p>
-                              <div className="flex flex-wrap gap-1.5 pt-1">
-                                <Badge variant="outline" className="text-[9px] uppercase tracking-wider bg-slate-50 text-slate-500 border-slate-200 px-2 py-0.5">
-                                  DOB: {candDetails?.dateOfBirth || "N/A"}
-                                </Badge>
-                                <Badge variant="outline" className="text-[9px] uppercase tracking-wider bg-slate-50 text-slate-500 border-slate-200 px-2 py-0.5">
-                                  Gender: {candDetails?.gender || "N/A"}
-                                </Badge>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-405 uppercase tracking-widest leading-none">Email Address</p>
-                              <p className="text-sm font-semibold text-slate-750">{candDetails?.email}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-405 uppercase tracking-widest leading-none">Phone Contact</p>
-                              <p className="text-sm font-semibold text-slate-750">{candDetails?.phone || "N/A"}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-405 uppercase tracking-widest leading-none">UG Qualification</p>
-                              <p className="text-sm font-semibold text-slate-750">{candDetails?.qualification || "N/A"}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-405 uppercase tracking-widest leading-none">PG Qualification</p>
-                              <p className="text-sm font-semibold text-slate-750">{candDetails?.pgQualifications || "N/A"}</p>
-                            </div>
-                            <div className="col-span-2 space-y-1">
-                              <p className="text-[10px] font-black text-slate-405 uppercase tracking-widest leading-none">Medical College / University</p>
-                              <p className="text-sm font-semibold text-slate-750">{candDetails?.collegeName || "N/A"}</p>
-                            </div>
-                          </div>
-
-                          <div className="border-t pt-4 space-y-3.5">
-                            <div>
-                              <h4 className="text-[10px] font-black text-slate-450 uppercase tracking-widest mb-1">Applied Specialties Progress</h4>
-                              <p className="text-[9px] text-muted-foreground">Candidate's statuses under active panels today</p>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {candDetails?.applications?.map((app: any) => {
-                                const spec = specialities.find(s => s.id === app.specialityId);
-                                return (
-                                  <div key={app.id} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-3 rounded-xl shadow-xs">
-                                    <span className="font-bold text-xs text-slate-750">{spec?.name || "Specialization"}</span>
-                                    <Badge variant={app.status === "completed" ? "default" : "secondary"} className={`text-[9px] uppercase tracking-wider font-extrabold h-5 ${app.status === "completed" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200"}`}>
-                                      {app.status}
-                                    </Badge>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* APPLICATION FORM TAB (LAZY LOADED) */}
-                      {activeDossierTab === "pdf" && (
-                        <div className="w-full h-full min-h-[50vh] relative">
-                          {scoreOpen.submissionId ? (
-                            <iframe 
-                              src={`/api/submission-view/${scoreOpen.submissionId}?token=${localStorage.getItem("fellowship_token")}`} 
-                              className="w-full h-full border-none absolute inset-0" 
-                              title="Candidate Application Form"
-                            />
-                          ) : (
-                            <div className="flex items-center justify-center h-full text-muted-foreground text-sm font-semibold">
-                              No print submission available
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* LORS TAB (LAZY LOADED) */}
-                      {activeDossierTab === "lors" && (
-                        <div className="space-y-4">
-                          {(() => {
-                            const lors = candDetails?.documents?.filter((d: any) => 
-                              d.docType?.toLowerCase().includes("lor") || 
-                              d.fileName?.toLowerCase().includes("lor") || 
-                              d.fileName?.toLowerCase().includes("recommendation")
-                            ) || [];
-
-                            if (lors.length === 0) {
-                              return (
-                                <div className="text-center py-12 text-slate-400 text-xs font-bold flex flex-col items-center justify-center gap-1">
-                                  <AlertTriangle className="h-6 w-6 text-amber-500" />
-                                  No LOR files uploaded for this candidate.
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <div className="space-y-6">
-                                <div>
-                                  <h4 className="text-[10px] font-black text-slate-450 uppercase tracking-widest mb-1">Letters of Recommendation</h4>
-                                  <p className="text-[9px] text-muted-foreground">Click a file to open LOR in full view</p>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  {lors.map((lor: any, idx: number) => (
-                                    <div key={lor.id} className="border border-indigo-100 rounded-2xl bg-indigo-50/20 p-4 flex flex-col justify-between space-y-3.5 shadow-xs">
-                                      <div className="flex items-start gap-3">
-                                        <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-                                          <FileText className="h-4.5 w-4.5" />
-                                        </div>
-                                        <div className="overflow-hidden">
-                                          <p className="text-xs font-black text-slate-800 truncate" title={lor.fileName}>{lor.fileName}</p>
-                                          <p className="text-[10px] text-slate-400 uppercase tracking-wider font-mono mt-0.5">LOR {idx + 1}</p>
-                                        </div>
-                                      </div>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => {
-                                          const token = localStorage.getItem("fellowship_token");
-                                          const cleanPath = getCleanObjectPath(lor.fileUrl);
-                                          const target = cleanPath
-                                            ? `/api/storage${cleanPath}?token=${token}`
-                                            : (lor.fileUrl || `/api/documents/${lor.id}?token=${token}`);
-                                          window.open(target, "_blank");
-                                        }}
-                                        className="h-8 text-[10px] font-black uppercase text-indigo-700 border-indigo-200 hover:bg-indigo-50 w-full"
-                                      >
-                                        Open LOR File
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-
-                      {/* SUPPORTING DOCUMENTS TAB (LAZY LOADED) */}
-                      {activeDossierTab === "docs" && (
-                        <div className="space-y-4">
-                          {(() => {
-                            const supporting = candDetails?.documents?.filter((d: any) => 
-                              !d.docType?.toLowerCase().includes("photo") && 
-                              !d.docType?.toLowerCase().includes("profile") &&
-                              !d.docType?.toLowerCase().includes("picture") &&
-                              !d.docType?.toLowerCase().includes("lor") && 
-                              !d.fileName?.toLowerCase().includes("lor") && 
-                              !d.fileName?.toLowerCase().includes("recommendation")
-                            ) || [];
-
-                            if (supporting.length === 0) {
-                              return (
-                                <div className="text-center py-12 text-slate-400 text-xs font-bold flex flex-col items-center justify-center gap-1">
-                                  <HelpCircle className="h-6 w-6 text-slate-350" />
-                                  No supporting files uploaded.
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <div className="space-y-6">
-                                <div>
-                                  <h4 className="text-[10px] font-black text-slate-450 uppercase tracking-widest mb-1">Supporting Certificates & Files</h4>
-                                  <p className="text-[9px] text-muted-foreground">Click a file to open supporting documentation in full view</p>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  {supporting.map((doc: any) => (
-                                    <div key={doc.id} className="border border-slate-205 rounded-2xl bg-slate-50/50 p-4 flex flex-col justify-between space-y-3 shadow-xs">
-                                      <div className="flex items-start gap-3">
-                                        <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-650 flex items-center justify-center shrink-0">
-                                          <FileText className="h-4.5 w-4.5" />
-                                        </div>
-                                        <div className="overflow-hidden">
-                                          <p className="text-xs font-black text-slate-800 truncate" title={doc.fileName}>{doc.fileName}</p>
-                                          <p className="text-[9px] text-slate-400 uppercase tracking-wider font-mono mt-0.5">{doc.docType || "Supporting Document"}</p>
-                                        </div>
-                                      </div>
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => {
-                                          const token = localStorage.getItem("fellowship_token");
-                                          const cleanPath = getCleanObjectPath(doc.fileUrl);
-                                          const target = cleanPath
-                                            ? `/api/storage${cleanPath}?token=${token}`
-                                            : (doc.fileUrl || `/api/documents/${doc.id}?token=${token}`);
-                                          window.open(target, "_blank");
-                                        }}
-                                        className="h-8 text-[10px] font-black uppercase text-slate-700 border-slate-250 hover:bg-slate-100 w-full"
-                                      >
-                                        Open Document
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Column: Score entry and lock protocols */}
-              <div className="md:col-span-2 p-6 flex flex-col justify-between bg-white h-full">
-                <div className="space-y-6">
-                  <div>
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 leading-none">Evaluation Matrix</h4>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                      Total scoring range: 0 – 50 Marks (Clinical VIVA)
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
+      {/* ─── Score Entry Dialog ─── */}
+      {myStatus?.marksEntryEnabled && (
+        <Dialog open={!!scoreOpen} onOpenChange={(o) => { if (!o) { setScoreOpen(null); setScore(""); setRemarks(""); } }}>
+          <DialogContent className="max-w-md rounded-3xl border-none shadow-2xl p-0 overflow-hidden bg-white">
+            {(() => {
+              const maxVal = isMindMatterDoctor ? 10 : 50;
+              const titleText = isMindMatterDoctor ? "Mind Matter Score" : "VIVA Score";
+              const subText = isMindMatterDoctor ? "Maximum 10 marks · Mind Matter Panel" : "Maximum 50 marks · VIVA Panel";
+              const headerBg = isMindMatterDoctor ? "bg-amber-700" : "bg-indigo-700";
+              const headerStarColor = isMindMatterDoctor ? "text-amber-300" : "text-indigo-300";
+              const saveBtnBg = isMindMatterDoctor ? "bg-amber-700 hover:bg-amber-800" : "bg-indigo-700 hover:bg-indigo-800";
+              
+              return (
+                <>
+                  <DialogHeader className={`${headerBg} p-5 text-white`}>
+                    <DialogTitle className="text-base font-black uppercase tracking-widest flex items-center gap-2">
+                      <Star className={`h-4.5 w-4.5 ${headerStarColor}`} />
+                      {titleText} — {scoreOpen?.candidateName}
+                    </DialogTitle>
+                    <p className="text-[11px] font-semibold mt-1">{subText}</p>
+                  </DialogHeader>
+                  <div className="p-6 space-y-5">
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Assigned Clinical Mark (max 50)</Label>
-                      <Input 
-                        type="number" 
-                        min={0} 
-                        max={50}
-                        value={score} 
+                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Score (Max {maxVal})</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={maxVal}
+                        step="0.5"
+                        value={score}
                         onChange={(e) => {
-                          const val = Number(e.target.value);
-                          if (val > 50) setScore("50");
-                          else if (val < 0) setScore("0");
+                          const v = Number(e.target.value);
+                          if (v > maxVal) setScore(String(maxVal));
+                          else if (v < 0) setScore("0");
                           else setScore(e.target.value);
-                        }} 
-                        placeholder="Enter score..." 
-                        className="h-12 border-2 rounded-xl focus:ring-indigo-500 font-bold font-mono text-sm"
+                        }}
+                        placeholder={`Enter score 0–{maxVal}...`}
+                        className="h-12 border-2 rounded-xl font-bold font-mono text-lg text-center"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Assessment Remarks</Label>
-                      <textarea 
-                        value={remarks} 
-                        onChange={(e) => setRemarks(e.target.value)} 
-                        placeholder="Clinical assessment observations, skills proficiency, panel consensus notes..." 
-                        className="w-full min-h-[140px] p-3 text-sm font-semibold border-2 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 border-input bg-background"
+                      <Label className="text-[10px] font-black uppercase text-slate-500 tracking-wider">Remarks (Optional)</Label>
+                      <textarea
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        placeholder="Assessment notes..."
+                        className="w-full min-h-[90px] p-3 text-sm font-semibold border-2 rounded-xl border-input bg-background"
                       />
                     </div>
                   </div>
-                </div>
-
-                <div className="pt-6 border-t border-slate-100 flex flex-col gap-2 shrink-0">
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      onClick={() => { setScoreOpen(null); setActiveDossierTab("profile"); }} 
-                      className="rounded-xl h-12 text-xs font-bold uppercase tracking-wider flex-1"
-                    >
+                  <DialogFooter className="px-6 pb-6 gap-2">
+                    <Button variant="outline" onClick={() => { setScoreOpen(null); setScore(""); setRemarks(""); }} className="rounded-xl flex-1 h-11">
                       Cancel
                     </Button>
-                    <Button 
-                      disabled={!score || submitScore.isPending} 
+                    <Button
+                      disabled={score === "" || submitScore.isPending}
                       onClick={() => scoreOpen && submitScore.mutate({ candidateId: scoreOpen.candidateId, score: Number(score), remarks })}
-                      className="rounded-xl h-12 bg-slate-900 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider flex-1 gap-1.5 shadow-lg active:scale-95 transition-all"
+                      className={`rounded-xl flex-1 h-11 ${saveBtnBg} text-white font-black gap-1.5`}
                     >
-                      {submitScore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCheck className="h-4 w-4 text-emerald-400" />}
-                      Commit & Lock
+                      {submitScore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                      Save Score
                     </Button>
-                  </div>
-                  <p className="text-[9px] font-bold text-center text-slate-400 uppercase tracking-widest mt-1">
-                    * Evaluation lock synchronizes marks to counseling queue atomically
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                  </DialogFooter>
+                </>
+              );
+            })()}
+          </DialogContent>
+        </Dialog>
+      )}
 
-      {/* ─── Candidate Dossier Modal (Photo, Application Form, LORs) ─── */}
-      <Dialog open={!!dossierOpen} onOpenChange={() => setDossierOpen(null)}>
+      {/* Score entry removed for regular panel doctors. Candidate details shown in the Dossier modal below. */}
+
+      {/* ─── Candidate Dossier Modal (Photo, Application Form, LORs, Mind Matter Score) ─── */}
+      <Dialog open={!!dossierOpen} onOpenChange={(open) => { if (!open) { setDossierOpen(null); setScore(""); setRemarks(""); } }}>
         <DialogContent className="max-w-6xl w-[95vw] max-h-[90vh] p-0 rounded-[32px] overflow-hidden border border-slate-200 bg-white shadow-2xl flex flex-col">
           <DialogHeader className="bg-slate-900 text-white p-6 shrink-0 border-b border-white/5 flex flex-row items-center justify-between">
             <div>
@@ -642,20 +455,27 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                     {candLoading ? (
                       <Loader2 className="h-6 w-6 animate-spin text-orange-500" />
                     ) : (() => {
+                      const token = localStorage.getItem("fellowship_token");
+                      // Try direct photoUrl field first
+                      if (candDetails?.photoUrl) {
+                        const cleanPath = getCleanObjectPath(candDetails.photoUrl);
+                        const src = cleanPath ? `/api/storage${cleanPath}?token=${token}` : candDetails.photoUrl;
+                        return <img src={src} alt="Passport Photo" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }} />;
+                      }
+                      // Fallback: search documents
                       const photoDoc = candDetails?.documents?.find((d: any) => 
                         d.docType?.toLowerCase().includes("photo") || 
                         d.docType?.toLowerCase().includes("profile") ||
                         d.docType?.toLowerCase().includes("picture")
                       );
                       if (photoDoc) {
-                        const token = localStorage.getItem("fellowship_token");
                         const cleanPhotoPath = getCleanObjectPath(photoDoc.fileUrl);
                         const photoSrc = cleanPhotoPath
                           ? `/api/storage${cleanPhotoPath}?token=${token}`
-                          : (photoDoc.fileUrl || `/api/documents/${photoDoc.id}`);
-                        return <img src={photoSrc} alt="Passport Photo" className="h-full w-full object-cover" />;
+                          : `/api/documents/${photoDoc.id}?token=${token}`;
+                        return <img src={photoSrc} alt="Passport Photo" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display='none'; }} />;
                       }
-                      return dossierOpen.candidateName.charAt(0).toUpperCase();
+                      return (dossierOpen?.candidateName ?? "?").charAt(0).toUpperCase();
                     })()}
                   </div>
                   <div>
@@ -732,7 +552,15 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                             key={lor.id}
                             size="sm"
                             variant="outline"
-                            onClick={() => window.open(lor.fileUrl || `/api/documents/${lor.id}?token=${localStorage.getItem("fellowship_token")}`, "_blank")}
+                            onClick={() => {
+                              const token = localStorage.getItem("fellowship_token");
+                              // Always use authenticated API storage path
+                              const cleanPath = getCleanObjectPath(lor.fileUrl);
+                              const target = cleanPath
+                                ? `/api/storage${cleanPath}?token=${token}`
+                                : `/api/documents/${lor.id}?token=${token}`;
+                              window.open(target, "_blank");
+                            }}
                             className="h-10 text-[10px] font-black uppercase text-indigo-700 border-indigo-200 hover:bg-indigo-50 w-full flex items-center justify-center gap-2 rounded-xl shadow-xs"
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
@@ -743,6 +571,79 @@ function DoctorView({ toast, qc }: { toast: ReturnType<typeof import("../hooks/u
                     );
                   })()}
                 </div>
+
+                {/* 4. Score Entry — generalized for both VIVA and Mind Matter panel doctors */}
+                {(() => {
+                  const maxVal = isMindMatterDoctor ? 10 : 50;
+                  const scoreLabel = isMindMatterDoctor ? "Mind Matter Score" : "VIVA Score";
+                  const borderColor = isMindMatterDoctor ? "border-amber-300" : "border-emerald-300";
+                  const bgColor = isMindMatterDoctor ? "bg-amber-50" : "bg-emerald-50";
+                  const titleColor = isMindMatterDoctor ? "text-amber-700" : "text-emerald-700";
+                  const chipBorder = isMindMatterDoctor ? "border-amber-200" : "border-emerald-200";
+                  const scoreColor = isMindMatterDoctor ? "text-amber-700" : "text-emerald-700";
+                  const inputBorder = isMindMatterDoctor ? "border-amber-300 focus-visible:ring-amber-400" : "border-emerald-300 focus-visible:ring-emerald-400";
+                  const saveBtnBg = isMindMatterDoctor ? "bg-amber-700 hover:bg-amber-800" : "bg-emerald-700 hover:bg-emerald-800";
+                  const remarksBorder = isMindMatterDoctor ? "border-amber-200 focus:border-amber-400" : "border-emerald-200 focus:border-emerald-400";
+                  return (
+                    <div className={`${bgColor} border-2 ${borderColor} p-5 rounded-3xl shadow-sm space-y-3`}>
+                      <h4 className={`text-[10px] font-black ${titleColor} uppercase tracking-widest leading-none border-b ${chipBorder} pb-2 flex items-center gap-1.5`}>
+                        <Star className="h-3.5 w-3.5" />
+                        {scoreLabel} (Max {maxVal})
+                      </h4>
+
+                      {/* Current score chip */}
+                      {dossierOpen?.existingScore && (
+                        <div className={`flex items-center justify-between bg-white rounded-xl px-4 py-2 border ${chipBorder}`}>
+                          <span className="text-xs font-bold text-slate-600">Current Score</span>
+                          <span className={`text-2xl font-black ${scoreColor}`}>
+                            {dossierOpen.existingScore.score}
+                            <span className="text-sm font-bold text-slate-400">/{maxVal}</span>
+                          </span>
+                        </div>
+                      )}
+
+                      {myStatus?.marksEntryEnabled ? (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={maxVal}
+                              value={score}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (v > maxVal) setScore(String(maxVal));
+                                else if (v < 0) setScore("0");
+                                else setScore(e.target.value);
+                              }}
+                              placeholder={`0 – ${maxVal}`}
+                              className={`h-11 border-2 ${inputBorder} rounded-xl font-black font-mono text-xl text-center flex-1`}
+                            />
+                            <Button
+                              disabled={score === "" || submitScore.isPending}
+                              onClick={() => dossierOpen && submitScore.mutate({ candidateId: dossierOpen.candidateId, score: Number(score), remarks })}
+                              className={`h-11 px-5 ${saveBtnBg} text-white font-black rounded-xl gap-1.5 shrink-0`}
+                            >
+                              {submitScore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                              Save
+                            </Button>
+                          </div>
+                          <textarea
+                            value={remarks}
+                            onChange={(e) => setRemarks(e.target.value)}
+                            placeholder="Remarks (optional)…"
+                            rows={2}
+                            className={`w-full p-2.5 text-xs font-semibold border-2 ${remarksBorder} rounded-xl bg-white resize-none focus:outline-none`}
+                          />
+                        </>
+                      ) : (
+                        !dossierOpen?.existingScore && (
+                          <p className="text-xs font-bold text-slate-500 italic">No score entered yet — marks entry not enabled for your account on this panel.</p>
+                        )
+                      )}
+                    </div>
+                  );
+                })()}
 
               </div>
 
@@ -1102,11 +1003,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
                       });
 
                       const isMindMatterScore = (s: ScoreEntry) => {
-                        return panels.some(p => 
-                          p.specialityId === s.specialityId && 
-                          p.members.some(m => m.doctorId === s.doctorId) && 
-                          (p as any).isMindMatter === true
-                        );
+                        return s.specialityId === null || s.specialityId === undefined;
                       };
 
                       return Object.entries(grouped).map(([cid, data]) => {
@@ -1219,7 +1116,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
               </div>
               <div className="space-y-2">
                 {(() => {
-                  const isMM = panels.some(p => p.specialityId === editingScoreEntry.specialityId && p.members.some(m => m.doctorId === editingScoreEntry.doctorId) && (p as any).isMindMatter === true);
+                  const isMM = editingScoreEntry.specialityId === null || editingScoreEntry.specialityId === undefined;
                   const maxVal = isMM ? 10 : 50;
                   return (
                     <>
@@ -1255,7 +1152,7 @@ function AdminView({ toast, qc, isCEC }: { toast: ReturnType<typeof import("../h
               disabled={updateScoreMutation.isPending}
               onClick={() => {
                 if (editingScoreEntry) {
-                  const isMM = panels.some(p => p.specialityId === editingScoreEntry.specialityId && p.members.some(m => m.doctorId === editingScoreEntry.doctorId) && (p as any).isMindMatter === true);
+                  const isMM = editingScoreEntry.specialityId === null || editingScoreEntry.specialityId === undefined;
                   const maxVal = isMM ? 10 : 50;
                   const val = parseFloat(editScoreValue);
                   if (isNaN(val) || val < 0 || val > maxVal) {
@@ -1411,6 +1308,16 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const setMainMemberMutation = useMutation({
+    mutationFn: ({ panelId, doctorId, isMain, marksEntryEnabled }: { panelId: number; doctorId: number; isMain?: boolean; marksEntryEnabled?: boolean }) =>
+      api.post(`/panels/${panelId}/members`, { doctorId, isMain, marksEntryEnabled }),
+    onSuccess: () => {
+      toast({ title: "Panel doctor settings updated" });
+      qc.invalidateQueries({ queryKey: ["panels"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const removeMemberMutation = useMutation({
     mutationFn: ({ panelId, doctorId }: { panelId: number; doctorId: number }) =>
       api.delete(`/panels/${panelId}/members/${doctorId}`),
@@ -1422,7 +1329,7 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
     mutationFn: ({ panelId, candidateId }: { panelId: number; candidateId: number }) =>
       api.post(`/panels/${panelId}/queue`, { candidateId }),
     onSuccess: () => {
-      toast({ title: "Added to queue" });
+      // Silently refresh queue — no toast needed
       qc.invalidateQueries({ queryKey: ["panel-queue", selectedPanelId] });
       setAddCandidateId(""); setCandSearch("");
     },
@@ -1518,22 +1425,20 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
 
   const selectedPanel = panels.find((p) => p.id === selectedPanelId);
 
-  // Compute eligible candidates for selected panel (matching speciality), sorted A-Z by first name
+  // Compute eligible candidates for selected panel (matching speciality), sorted A-Z by full name
   const eligibleCandidates = (() => {
     if (!selectedPanel) return [];
     const specId = selectedPanel.specialityId ? Number(selectedPanel.specialityId) : null;
     let filtered = candidates.filter((c) => {
-      if (!specId) return true; // General panel: all candidates eligible
+      if (!specId) return true; // General / Mind Matter panel: all candidates eligible
       const hasApp = (c as any).applications?.some((app: any) => Number(app.specialityId) === specId);
       const hasPref = (c as any).preferences?.some((p: any) => Number(p.specialityId) === specId);
       return hasApp || hasPref;
     });
-    // Sort A-Z by first name (first token of full name)
-    filtered = [...filtered].sort((a, b) => {
-      const firstA = (a.fullName ?? "").split(" ")[0]!.toLowerCase();
-      const firstB = (b.fullName ?? "").split(" ")[0]!.toLowerCase();
-      return firstA.localeCompare(firstB);
-    });
+    // Sort strictly A-Z by full name
+    filtered = [...filtered].sort((a, b) =>
+      (a.fullName ?? "").toLowerCase().localeCompare((b.fullName ?? "").toLowerCase())
+    );
     return filtered;
   })();
 
@@ -1554,9 +1459,16 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
           <span className="font-semibold text-foreground">{panels.length}</span> panels ·{" "}
           <span className="font-semibold text-emerald-600">{panels.filter((p) => p.isActive).length}</span> active
         </div>
-        <Button size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" /> Create Panel
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" className="gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-50 font-bold"
+            onClick={() => { setCreateIsMindMatter(true); setCreateOpen(true); }}
+          >
+            <Plus className="h-4 w-4" /> Create Mind Matter Panel
+          </Button>
+          <Button size="sm" className="gap-1.5" onClick={() => { setCreateIsMindMatter(false); setCreateOpen(true); }}>
+            <Plus className="h-4 w-4" /> Create Panel
+          </Button>
+        </div>
       </div>
 
       {panels.length === 0 ? (
@@ -1583,7 +1495,14 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
               >
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <p className="font-semibold text-sm">{p.name}</p>
+                    <p className="font-semibold text-sm flex items-center gap-1.5">
+                      {p.name}
+                      {p.isMindMatter && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-100 text-amber-800 border border-amber-200 uppercase tracking-wider">
+                          MM
+                        </span>
+                      )}
+                    </p>
                     <p className="text-xs text-muted-foreground">Room {p.roomNumber}</p>
                   </div>
                   <div className="flex flex-col items-end gap-1">
@@ -1609,8 +1528,13 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
                       <CardTitle className="flex items-center gap-2 text-base">
                         <DoorOpen className="h-4 w-4" /> Room {selectedPanel.roomNumber}
                         <span className="text-base font-normal text-muted-foreground">— {selectedPanel.name}</span>
+                        {selectedPanel.isMindMatter && (
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-200 font-bold uppercase tracking-wider text-[9px] hover:bg-amber-100">
+                            Mind Matter Panel
+                          </Badge>
+                        )}
                       </CardTitle>
-                      {selectedPanel.specialityId && (
+                      {selectedPanel.specialityId && !selectedPanel.isMindMatter && (
                         <div className="mt-1">
                           <Badge variant="outline" className="text-[10px] text-primary border-primary/20 bg-primary/5">
                             Specialization: {specialities.find((s) => s.id === selectedPanel.specialityId)?.name || "Mapped"}
@@ -1636,20 +1560,77 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
                 <CardContent>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Panel Doctors</p>
                   {selectedPanel.members.length === 0 ? (
-                    <p className="text-sm text-muted-foreground mb-2">No doctors assigned yet</p>
+                    <p className="text-sm text-muted-foreground mb-3">No doctors assigned yet</p>
                   ) : (
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      {selectedPanel.members.map((m) => (
-                        <div key={m.doctorId} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-sm">
-                          <UserCheck className="h-3 w-3 text-primary" />
-                          <span className="font-medium text-xs">{m.doctorName}</span>
-                          {m.isMain && <Badge className="text-[9px] h-4 px-1">Main</Badge>}
-                          <button className="ml-1 text-muted-foreground hover:text-destructive transition-colors"
-                            onClick={() => removeMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId })}>
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 mb-3 shadow-sm">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/80 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[9px]">
+                            <th className="text-left px-3 py-2">Doctor Name</th>
+                            <th className="text-center px-3 py-2 w-48">Marks Entry Enabled</th>
+                            <th className="text-center px-3 py-2 w-16">Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white">
+                          {selectedPanel.members.map((m) => (
+                            <tr key={m.doctorId} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="px-3 py-2.5 font-semibold text-slate-755">
+                                <div className="flex items-center gap-1.5">
+                                  <UserCheck className={`h-3.5 w-3.5 ${m.marksEntryEnabled ? "text-emerald-500" : "text-slate-400"}`} />
+                                  <span>{m.doctorName}</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                {/* Marks Entry Toggle */}
+                                {!selectedPanel.isMindMatter ? (
+                                  m.marksEntryEnabled ? (
+                                    <button
+                                      onClick={() => setMainMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId, marksEntryEnabled: false, isMain: m.isMain })}
+                                      className="text-[9px] h-5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded transition-all font-bold inline-flex items-center justify-center gap-0.5 shadow-sm hover:scale-[1.02] active:scale-[0.98]"
+                                      title="Click to Disable Marks Entry"
+                                    >
+                                      <span>Marks Entry ✓</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => setMainMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId, marksEntryEnabled: true, isMain: m.isMain })}
+                                      className="text-[9px] h-5 px-2 bg-slate-200 hover:bg-emerald-100 hover:text-emerald-800 text-slate-650 rounded transition-all font-bold inline-flex items-center justify-center shadow-sm border border-slate-300/50 hover:scale-[1.02] active:scale-[0.98]"
+                                      title="Enable Marks Entry"
+                                    >
+                                      Enable Marks
+                                    </button>
+                                  )
+                                ) : (
+                                  /* Mind Matter: Main Panelist Toggle */
+                                  m.isMain ? (
+                                    <button
+                                      onClick={() => setMainMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId, isMain: false, marksEntryEnabled: m.marksEntryEnabled })}
+                                      className="text-[9px] h-5 px-2 bg-amber-500 hover:bg-amber-600 text-white rounded transition-all font-bold inline-flex items-center justify-center shadow-sm hover:scale-[1.02] active:scale-[0.98]"
+                                      title="Click to Disable Main Doctor"
+                                    >
+                                      Main Doctor ✓
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => setMainMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId, isMain: true, marksEntryEnabled: m.marksEntryEnabled })}
+                                      className="text-[9px] h-5 px-2 bg-slate-200 hover:bg-amber-100 hover:text-amber-800 text-slate-650 rounded transition-all font-bold inline-flex items-center justify-center shadow-sm border border-slate-300/50 hover:scale-[1.02] active:scale-[0.98]"
+                                      title="Make Main Doctor"
+                                    >
+                                      Make Main
+                                    </button>
+                                  )
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-center">
+                                <button className="text-slate-400 hover:text-red-500 hover:scale-110 transition-all duration-200 animate-in spin-in-12"
+                                  onClick={() => removeMemberMutation.mutate({ panelId: selectedPanel.id, doctorId: m.doctorId })}>
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                   <div className="flex gap-2">
@@ -1864,7 +1845,7 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
                           {selectedPanel?.isMindMatter ? "Mind Matter — All Eligible Students (A-Z)" : "All Eligible Students (A-Z)"}
                           <span className="ml-1.5 text-primary font-bold">({eligibleCandidates.length})</span>
                         </p>
-                        {selectedPanel?.specialityId && (
+                        {(selectedPanel?.specialityId || selectedPanel?.isMindMatter) && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -1934,30 +1915,40 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
               <Label>Room Number / Name</Label>
               <Input placeholder="e.g. Room 101, Conference Hall…" value={createRoom} onChange={(e) => setCreateRoom(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
-              <Label>Specialization Mapping</Label>
-              <Select value={createSpecialityId} onValueChange={setCreateSpecialityId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Specialization..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None (General Panel)</SelectItem>
-                  {specialities.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input 
-                type="checkbox" 
-                id="createIsMindMatter"
-                checked={createIsMindMatter} 
-                onChange={(e) => setCreateIsMindMatter(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-350 text-orange-650 focus:ring-orange-500"
-              />
-              <Label htmlFor="createIsMindMatter" className="text-xs font-bold text-slate-750 cursor-pointer">Is Mind Matter Panel</Label>
-            </div>
+            {/* Hide specialization for Mind Matter panels — they cover ALL candidates */}
+            {!createIsMindMatter && (
+              <div className="space-y-1.5">
+                <Label>Specialization Mapping</Label>
+                <Select value={createSpecialityId} onValueChange={setCreateSpecialityId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Specialization..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None (General Panel)</SelectItem>
+                    {specialities.filter((s, idx, arr) => arr.findIndex(x => x.name.toLowerCase() === s.name.toLowerCase()) === idx).map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {!createIsMindMatter && (
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="createIsMindMatter"
+                  checked={createIsMindMatter}
+                  onChange={(e) => { setCreateIsMindMatter(e.target.checked); if (e.target.checked) setCreateSpecialityId("none"); }}
+                  className="h-4 w-4 rounded border-gray-350 text-orange-650 focus:ring-orange-500 cursor-pointer"
+                />
+                <Label htmlFor="createIsMindMatter" className="text-xs font-bold text-slate-750 cursor-pointer select-none">Is Mind Matter Panel</Label>
+              </div>
+            )}
+            {createIsMindMatter && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs font-semibold text-amber-800 leading-relaxed">
+                ✅ <strong>Auto-allocation:</strong> All registered candidates will be automatically assigned to this Mind Matter panel when it is created. No manual assignment needed.
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -1987,30 +1978,39 @@ function PanelsTab({ toast, qc, candidates, specialities, panels, panelsLoading 
               <Label>Room Number / Name</Label>
               <Input value={editRoom} onChange={(e) => setEditRoom(e.target.value)} />
             </div>
-            <div className="space-y-1.5">
-              <Label>Specialization Mapping</Label>
-              <Select value={editSpecialityId} onValueChange={setEditSpecialityId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Specialization..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None (General Panel)</SelectItem>
-                  {specialities.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input 
-                type="checkbox" 
-                id="editIsMindMatter"
-                checked={editIsMindMatter} 
-                onChange={(e) => setEditIsMindMatter(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-350 text-orange-650 focus:ring-orange-500"
-              />
-              <Label htmlFor="editIsMindMatter" className="text-xs font-bold text-slate-755 cursor-pointer">Is Mind Matter Panel</Label>
-            </div>
+            {!editIsMindMatter && (
+              <div className="space-y-1.5">
+                <Label>Specialization Mapping</Label>
+                <Select value={editSpecialityId} onValueChange={setEditSpecialityId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Specialization..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None (General Panel)</SelectItem>
+                    {specialities.filter((s, idx, arr) => arr.findIndex(x => x.name.toLowerCase() === s.name.toLowerCase()) === idx).map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>{s.name} ({s.code})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {!managePanel?.isMindMatter && (
+              <div className="flex items-center gap-2 pt-1">
+                <input 
+                  type="checkbox" 
+                  id="editIsMindMatter"
+                  checked={editIsMindMatter} 
+                  onChange={(e) => {
+                    setEditIsMindMatter(e.target.checked);
+                    if (e.target.checked) {
+                      setEditSpecialityId("none");
+                    }
+                  }}
+                  className="h-4 w-4 rounded border-gray-350 text-orange-650 focus:ring-orange-500 cursor-pointer"
+                />
+                <Label htmlFor="editIsMindMatter" className="text-xs font-bold text-slate-755 cursor-pointer select-none">Is Mind Matter Panel</Label>
+              </div>
+            )}
             <div className="flex justify-between border-t pt-2 text-sm">
               <span className="text-muted-foreground">Members count:</span>
               <span className="font-semibold">{managePanel?.members.length} doctors</span>
@@ -2318,11 +2318,7 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors,
   }
 
   const isMindMatterScore = (s: { doctorId: number; specialityId: number | null }) => {
-    return panels.some(p => 
-      p.specialityId === s.specialityId && 
-      p.members.some(m => m.doctorId === s.doctorId) && 
-      (p as any).isMindMatter === true
-    );
+    return s.specialityId === null || s.specialityId === undefined;
   };
 
   // Helper stats
@@ -2437,26 +2433,12 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors,
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-100 bg-slate-50/40 text-slate-450 text-[10px] font-black uppercase tracking-widest">
+                  <tr className="border-b border-slate-100 bg-slate-50/40 text-slate-455 text-[10px] font-black uppercase tracking-widest">
                     <th className="text-left px-6 py-3.5 font-black">Candidate</th>
                     <th className="text-center px-4 py-3.5 font-black w-24">Code</th>
                     <th className="text-right px-4 py-3.5 font-black w-28">MCQ (Max 50)</th>
-                    {selectedSpec === "all" ? (
-                      <>
-                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 1 (Max 50)</th>
-                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 2 (Max 50)</th>
-                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 3 (Max 50)</th>
-                        <th className="text-right px-4 py-3.5 font-black w-24">Doc 4 (Max 50)</th>
-                      </>
-                    ) : (
-                      panelDoctors.map((doc) => (
-                        <th key={doc.doctorId} className="text-right px-4 py-3.5 font-black max-w-[120px] truncate" title={doc.doctorName}>
-                          {doc.doctorName} (Max {doc.isMindMatter ? 10 : 50})
-                        </th>
-                      ))
-                    )}
-                    <th className="text-right px-4 py-3.5 font-black w-28">Avg VIVA (Max 50)</th>
-                    <th className="text-right px-4 py-3.5 font-black w-28">Mind Matter (Max 10)</th>
+                    <th className="text-right px-4 py-3.5 font-black w-36">VIVA (Max 50)</th>
+                    <th className="text-right px-4 py-3.5 font-black w-36">Mind Matter (Max 10)</th>
                     <th className="text-right px-6 py-3.5 font-black w-32">Total (Max 110)</th>
                   </tr>
                 </thead>
@@ -2493,9 +2475,6 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors,
                       ? (mcqScore ?? 0) + (avgViva ?? 0) + (mindMatterScore ?? 0)
                       : null;
 
-                    // Stably sort doctor scores for display in doctor columns
-                    const sortedScores = [...candScores].sort((a, b) => a.doctorId - b.doctorId);
-
                     return (
                       <tr key={c.id} className="hover:bg-slate-50/60 transition-colors">
                         <td className="px-6 py-4">
@@ -2529,102 +2508,27 @@ function MarkSheetTab({ specialities, candidates, scores, isCEC, toast, doctors,
                             }}
                           />
                         </td>
-                        {/* 4 Doctor columns or specialty specific panel doctors */}
-                        {selectedSpec === "all" ? (
-                          [1, 2, 3, 4].map((colIndex) => {
-                            const sEntry = sortedScores[colIndex - 1];
-                            const isMM = sEntry ? isMindMatterScore(sEntry) : false;
-                            const maxVal = isMM ? 10 : 50;
-
-                            return (
-                              <td key={colIndex} className="px-4 py-4 text-right">
-                                {sEntry ? (
-                                  <div className="flex flex-col items-end">
-                                    <EditableCell
-                                      value={sEntry.score}
-                                      max={maxVal}
-                                      canEdit={canEdit}
-                                      onSave={async (val) => {
-                                        await updateScoreMutation.mutateAsync({
-                                          candidateId: c.id,
-                                          vivaScore: val,
-                                          targetDoctorId: sEntry.doctorId
-                                        });
-                                      }}
-                                    />
-                                    <span className="block text-[8px] text-slate-400 truncate max-w-[80px] text-right" title={sEntry.doctorName}>
-                                      {sEntry.doctorName}
-                                    </span>
-                                  </div>
-                                ) : (
-                                  <div className="text-slate-350 text-xs font-mono">
-                                    {canEdit ? (
-                                      <button
-                                        onClick={() => setVivaDialogOpen(c)}
-                                        className="text-[10px] text-indigo-400 hover:text-indigo-600 hover:underline font-sans font-bold"
-                                      >
-                                        + Doc
-                                      </button>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })
-                        ) : (
-                          panelDoctors.map((doc) => {
-                            const sEntry = candScores.find(s => s.doctorId === doc.doctorId);
-                            return (
-                              <td key={doc.doctorId} className="px-4 py-4 text-right">
-                                {sEntry ? (
-                                  <div className="flex flex-col items-end">
-                                    <EditableCell
-                                      value={sEntry.score}
-                                      max={doc.isMindMatter ? 10 : 50}
-                                      canEdit={canEdit}
-                                      onSave={async (val) => {
-                                        await updateScoreMutation.mutateAsync({
-                                          candidateId: c.id,
-                                          vivaScore: val,
-                                          targetDoctorId: sEntry.doctorId
-                                        });
-                                      }}
-                                    />
-                                  </div>
-                                ) : (
-                                  <div className="text-slate-350 text-xs font-mono">
-                                    {canEdit ? (
-                                      <button
-                                        onClick={() => setVivaDialogOpen(c)}
-                                        className="text-[10px] text-indigo-400 hover:text-indigo-600 hover:underline font-sans font-bold"
-                                      >
-                                        + Score
-                                      </button>
-                                    ) : (
-                                      "—"
-                                    )}
-                                  </div>
-                                )}
-                              </td>
-                            );
-                          })
-                        )}
                         <td className="px-4 py-4 text-right">
-                          <div className="flex flex-col items-end">
-                            <div 
-                              onClick={() => setVivaDialogOpen(c)}
-                              className="inline-flex items-center gap-1.5 cursor-pointer hover:bg-orange-50 border border-dashed border-slate-250 hover:border-orange-300 hover:text-orange-700 px-2 py-1 rounded-lg transition-all font-mono font-bold text-xs"
-                              title="Click to view and edit doctor breakdown"
-                            >
-                              <span className="tabular-nums">{avgViva !== null ? avgViva.toFixed(1) : "—"}</span>
-                              <span className="text-[10px] text-slate-400 select-none">✏️</span>
-                            </div>
-                            {candidateVivaScores.length > 0 && (
-                              <span className="text-[9px] text-slate-455 font-bold uppercase tracking-wider mt-0.5">
-                                {candidateVivaScores.length} {candidateVivaScores.length === 1 ? "doc" : "docs"}
-                              </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <EditableCell
+                              value={avgViva}
+                              max={50}
+                              canEdit={canEdit}
+                              onSave={async (val) => {
+                                await updateScoreMutation.mutateAsync({
+                                  candidateId: c.id,
+                                  vivaScore: val
+                                });
+                              }}
+                            />
+                            {avgViva !== null && (
+                              <button
+                                onClick={() => setVivaDialogOpen(c)}
+                                className="text-[9px] text-slate-450 hover:text-indigo-600 hover:underline font-bold"
+                                title="Click to view auditor breakdown details"
+                              >
+                                View Details
+                              </button>
                             )}
                           </div>
                         </td>

@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray, or } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
   db,
+  readDb,
   candidatesTable,
   unitsTable,
   usersTable,
@@ -14,7 +15,6 @@ import {
   examsTable,
   interviewScoresTable,
   auditLogsTable,
-  allocationsTable,
   doctorAssignmentsTable,
   candidateExamAssignmentsTable,
   applicationSubmissionsTable,
@@ -43,7 +43,6 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
   const attempts = await db.select().from(examAttemptsTable).where(eq(examAttemptsTable.candidateId, c.id));
   const exams = await db.select().from(examsTable);
   const interviews = await db.select().from(interviewScoresTable).where(eq(interviewScoresTable.candidateId, c.id));
-  const alloc = await db.select().from(allocationsTable).where(eq(allocationsTable.candidateId, c.id));
   const apps = await db.select().from(applicationsTable).where(eq(applicationsTable.candidateId, c.id));
 
   const mcqAttempts = attempts.filter((a) => {
@@ -81,7 +80,7 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
     psychometricScore,
     interviewScore,
     totalScore,
-    rank: alloc[0]?.rank ?? null,
+    rank: null,
     createdAt: c.createdAt.toISOString(),
     dateOfBirth: formatDOBToStandard(c.dateOfBirth),
     gender: c.gender,
@@ -176,57 +175,111 @@ async function fullCandidate(c: typeof candidatesTable.$inferSelect) {
   };
 }
 
-router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin", "central_exam_coordinator", "unit_coordinator", "doctor"), async (req, res) => {
-  const programId = req.query["programId"] ? Number(req.query["programId"]) : undefined;
+// GET /candidates — list candidates
+router.get("/candidates", requireAuth, async (req, res) => {
+  const programId = req.query["programId"] ? Number(req.query["programId"]) : null;
   const unitIdRaw = req.query["unitId"] ? Number(req.query["unitId"]) : undefined;
   const status = req.query["status"] as string | undefined;
 
   // Unit coordinator: force-filter to their unit
   let effectiveUnit = unitIdRaw;
   if (req.user!.role === "unit_coordinator") {
-    const [u] = await db.select().from(usersTable).where(eq(usersTable.id, req.user!.userId));
+    const [u] = await readDb.select().from(usersTable).where(eq(usersTable.id, req.user!.userId));
     effectiveUnit = u?.unitId ?? -1;
   }
 
-  let candidates = await db.select().from(candidatesTable)
+  let candidates = await readDb.select().from(candidatesTable)
     .where(eq(candidatesTable.isMock, (req as any).isMockMode))
     .orderBy(desc(candidatesTable.createdAt));
   if (effectiveUnit !== undefined) candidates = candidates.filter((c) => c.unitId === effectiveUnit);
   if (status) candidates = candidates.filter((c) => c.status === status);
 
   if (programId) {
-    const prefs = await db.select().from(candidatePreferencesTable);
-    const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
+    const specs = await readDb.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
     const specIds = new Set(specs.map((s) => s.id));
-    const candidateIds = new Set(prefs.filter((p) => specIds.has(p.specialityId)).map((p) => p.candidateId));
-    candidates = candidates.filter((c) => candidateIds.has(c.id));
+    if (specIds.size > 0) {
+      const prefs = await readDb.select().from(candidatePreferencesTable).where(inArray(candidatePreferencesTable.specialityId, [...specIds]));
+      const candidateIds = new Set(prefs.map((p) => p.candidateId));
+      candidates = candidates.filter((c) => candidateIds.has(c.id));
+    } else {
+      candidates = [];
+    }
   }
 
-  const units = await db.select().from(unitsTable);
-  const allPrefs = await db.select().from(candidatePreferencesTable);
-  const allSpecs = await db.select().from(specialitiesTable);
-  const allDocs = await db.select().from(documentsTable);
-  const allSubmissions = await db.select().from(applicationSubmissionsTable);
-  const allApplications = await db.select().from(applicationsTable);
-  const allScores = await db.select().from(interviewScoresTable);
+  let units: any[] = [];
+  let allPrefs: any[] = [];
+  let allSpecs: any[] = [];
+  let allDocs: any[] = [];
+  let allSubmissions: any[] = [];
+  let allApplications: any[] = [];
+  let allScores: any[] = [];
+
+  if (candidates.length > 0) {
+    const candidateIds = candidates.map((c) => c.id);
+    const emails = candidates.map((c) => c.email.toLowerCase().trim()).filter(Boolean);
+
+    units = await readDb.select().from(unitsTable);
+    allPrefs = await readDb.select().from(candidatePreferencesTable).where(inArray(candidatePreferencesTable.candidateId, candidateIds));
+    allSpecs = await readDb.select().from(specialitiesTable);
+    allDocs = await readDb.select().from(documentsTable).where(inArray(documentsTable.candidateId, candidateIds));
+    allSubmissions = emails.length > 0 
+      ? await readDb.select().from(applicationSubmissionsTable).where(
+          or(
+            inArray(applicationSubmissionsTable.candidateId, candidateIds),
+            inArray(sql`LOWER(email)`, emails)
+          )
+        )
+      : await readDb.select().from(applicationSubmissionsTable).where(inArray(applicationSubmissionsTable.candidateId, candidateIds));
+    allApplications = await readDb.select().from(applicationsTable).where(inArray(applicationsTable.candidateId, candidateIds));
+    allScores = await readDb.select().from(interviewScoresTable).where(inArray(interviewScoresTable.candidateId, candidateIds));
+  }
+
+  const unitsMap = new Map(units.map(u => [u.id, u]));
+  const specsMap = new Map(allSpecs.map(s => [s.id, s]));
+
+  const prefsByCandidate = new Map<number, typeof allPrefs>();
+  for (const p of allPrefs) {
+    if (!prefsByCandidate.has(p.candidateId)) prefsByCandidate.set(p.candidateId, []);
+    prefsByCandidate.get(p.candidateId)!.push(p);
+  }
+
+  const docsByCandidate = new Map<number, typeof allDocs>();
+  for (const d of allDocs) {
+    if (!docsByCandidate.has(d.candidateId)) docsByCandidate.set(d.candidateId, []);
+    docsByCandidate.get(d.candidateId)!.push(d);
+  }
+
+  const submissionsByCandidate = new Map<number, typeof allSubmissions[0]>();
+  const submissionsByEmail = new Map<string, typeof allSubmissions[0]>();
+  for (const s of allSubmissions) {
+    if (s.candidateId) submissionsByCandidate.set(s.candidateId, s);
+    if (s.email) submissionsByEmail.set(s.email.toLowerCase().trim(), s);
+  }
+
+  const scoresByCandidate = new Map<number, typeof allScores>();
+  for (const s of allScores) {
+    if (!scoresByCandidate.has(s.candidateId)) scoresByCandidate.set(s.candidateId, []);
+    scoresByCandidate.get(s.candidateId)!.push(s);
+  }
 
   const out = candidates.map((c) => {
-    const unit = c.unitId ? units.find((u) => u.id === c.unitId) : null;
-    const prefs = allPrefs
-      .filter((p) => p.candidateId === c.id)
+    const unit = c.unitId ? unitsMap.get(c.unitId) : null;
+    const prefs = (prefsByCandidate.get(c.id) || [])
       .sort((a, b) => a.preferenceOrder - b.preferenceOrder);
     let specializations = prefs
-      .map((p) => allSpecs.find((s) => s.id === p.specialityId)?.name ?? "")
+      .map((p) => specsMap.get(p.specialityId)?.name ?? "")
       .filter(Boolean);
     if (specializations.length === 0) {
-      const sub = allSubmissions.find(s => s.email?.toLowerCase() === c.email?.toLowerCase());
+      const sub = submissionsByCandidate.get(c.id) || (c.email ? submissionsByEmail.get(c.email.toLowerCase().trim()) : null);
       if (sub && sub.specialization) {
         specializations = parseSpecializationString(sub.specialization);
       }
     }
-    const documents = allDocs
-      .filter((d) => d.candidateId === c.id)
+    const documents = (docsByCandidate.get(c.id) || [])
       .map((d) => ({ id: d.id, docType: d.docType, fileName: d.fileName, fileUrl: d.fileUrl }));
+    const candScores = scoresByCandidate.get(c.id) || [];
+    const sub = submissionsByCandidate.get(c.id) || (c.email ? submissionsByEmail.get(c.email.toLowerCase().trim()) : null);
+
     return {
       id: c.id,
       candidateCode: c.candidateCode,
@@ -245,14 +298,10 @@ router.get("/candidates", requireAuth, requireRole("super_admin", "program_admin
       documents,
       mcqScore: c.mcqScore ? parseFloat(c.mcqScore) : null,
       psychometricScore: c.psychometricScore ? parseFloat(c.psychometricScore) : null,
-      interviewScore: (() => {
-        const candScores = allScores.filter((s: any) => s.candidateId === c.id);
-        return candScores.length > 0 ? candScores.reduce((acc: number, s: any) => acc + s.score, 0) / candScores.length : null;
-      })(),
+      interviewScore: candScores.length > 0 ? candScores.reduce((acc: number, s: any) => acc + s.score, 0) / candScores.length : null,
       totalScore: (() => {
         const mcq = c.mcqScore ? parseFloat(c.mcqScore) : null;
         const psy = c.psychometricScore ? parseFloat(c.psychometricScore) : null;
-        const candScores = allScores.filter((s: any) => s.candidateId === c.id);
         const intv = candScores.length > 0 ? candScores.reduce((acc: number, s: any) => acc + s.score, 0) / candScores.length : null;
         return (mcq !== null || psy !== null || intv !== null) ? (mcq ?? 0) + (psy ?? 0) + (intv ?? 0) : null;
       })(),
@@ -925,18 +974,35 @@ router.patch("/candidates/:candidateId/marks", requireAuth, requireRole("super_a
       }
 
       if (targetSpecId) {
-        const [doc] = await db.select().from(usersTable).where(eq(usersTable.id, docId));
-        const doctorName = doc?.fullName ?? `Doctor ID ${docId}`;
+        let finalDocId = docId;
+        if (!targetDoctorId) {
+          const specPanelDoctor = await db.execute(sql`
+            SELECT doctor_id FROM interview_panel_members ipm
+            JOIN interview_panels ip ON ip.id = ipm.panel_id
+            WHERE ip.speciality_id = ${targetSpecId} AND ip.is_active = TRUE
+            LIMIT 1
+          `);
+          if (specPanelDoctor.rows[0]) {
+            finalDocId = Number((specPanelDoctor.rows[0] as any).doctor_id);
+          }
+        }
+
+        const [doc] = await db.select().from(usersTable).where(eq(usersTable.id, finalDocId));
+        const doctorName = doc?.fullName ?? `Doctor ID ${finalDocId}`;
 
         const [spec] = await db.select().from(specialitiesTable).where(eq(specialitiesTable.id, targetSpecId));
         const specName = spec?.name ?? `Specialty ID ${targetSpecId}`;
 
-        const [existing] = await db.select().from(interviewScoresTable)
+        // Get any existing Viva score for this specialty (excluding Mind Matters panel scores)
+        const existingScores = await db.select().from(interviewScoresTable)
           .where(and(
             eq(interviewScoresTable.candidateId, id),
-            eq(interviewScoresTable.doctorId, docId),
-            eq(interviewScoresTable.specialityId, targetSpecId)
+            eq(interviewScoresTable.specialityId, targetSpecId),
+            sql`doctor_id NOT IN (SELECT doctor_id FROM interview_panel_members WHERE panel_id IN (SELECT id FROM interview_panels WHERE is_mind_matter = TRUE))`
           ));
+        const existing = existingScores[0];
+
+        const now = new Date();
 
         if (vivaScore === null) {
           if (existing) {
@@ -953,7 +1019,12 @@ router.patch("/candidates/:candidateId/marks", requireAuth, requireRole("super_a
         } else {
           if (existing) {
             await db.update(interviewScoresTable)
-              .set({ score: vivaScore, submittedAt: new Date() })
+              .set({ 
+                score: vivaScore, 
+                submittedAt: now,
+                lastModifiedBy: req.user!.userId,
+                lastModifiedAt: now
+              })
               .where(eq(interviewScoresTable.id, existing.id));
 
             await db.insert(auditLogsTable).values({
@@ -966,10 +1037,14 @@ router.patch("/candidates/:candidateId/marks", requireAuth, requireRole("super_a
           } else {
             await db.insert(interviewScoresTable).values({
               candidateId: id,
-              doctorId: docId,
+              doctorId: finalDocId,
               specialityId: targetSpecId,
               score: vivaScore,
-              remarks: "Coordinator Direct Entry"
+              remarks: "Coordinator Direct Entry",
+              enteredBy: req.user!.userId,
+              enteredAt: now,
+              lastModifiedBy: req.user!.userId,
+              lastModifiedAt: now
             });
 
             await db.insert(auditLogsTable).values({
@@ -1050,7 +1125,6 @@ async function cascadeDeleteCandidates(ids: number[]) {
   await db.delete(interviewScoresTable).where(inArray(interviewScoresTable.candidateId, ids));
   await db.delete(doctorAssignmentsTable).where(inArray(doctorAssignmentsTable.candidateId, ids));
   await db.delete(documentsTable).where(inArray(documentsTable.candidateId, ids));
-  await db.delete(allocationsTable).where(inArray(allocationsTable.candidateId, ids));
   await db.delete(candidateExamAssignmentsTable).where(inArray(candidateExamAssignmentsTable.candidateId, ids));
   await db.delete(examAttemptsTable).where(inArray(examAttemptsTable.candidateId, ids));
   await db.delete(candidatePreferencesTable).where(inArray(candidatePreferencesTable.candidateId, ids));

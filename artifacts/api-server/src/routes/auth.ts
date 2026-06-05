@@ -30,7 +30,12 @@ async function formatUser(user: typeof usersTable.$inferSelect) {
 }
 
 router.post("/auth/login", async (req, res) => {
-  const { email, password } = req.body as { email: string; password: string };
+  const { email, password, networkIp, deviceInfo: clientDeviceInfo } = req.body as {
+    email: string;
+    password: string;
+    networkIp?: string;
+    deviceInfo?: string;
+  };
   if (!email || !password) {
     res.status(400).json({ error: "Email and password required" });
     return;
@@ -58,8 +63,11 @@ router.post("/auth/login", async (req, res) => {
   const token = signToken({ userId: user.id, email: user.email, role: user.role });
 
   // Store active session in database
-  const ipAddress = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1").split(",")[0]!.trim();
-  const deviceInfo = String(req.headers["user-agent"] || "Unknown Device");
+  const fallbackIp = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "127.0.0.1").split(",")[0]!.trim();
+  const ipAddress = (networkIp && networkIp.trim()) ? networkIp.trim() : fallbackIp;
+
+  const fallbackDeviceInfo = String(req.headers["user-agent"] || "Unknown Device");
+  const deviceInfo = (clientDeviceInfo && clientDeviceInfo.trim()) ? clientDeviceInfo.trim() : fallbackDeviceInfo;
   
   await db.insert(userSessionsTable).values({
     userId: user.id,

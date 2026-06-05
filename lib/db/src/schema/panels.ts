@@ -1,4 +1,5 @@
-import { pgTable, text, serial, timestamp, integer, boolean, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, boolean, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { programsTable } from "./programs";
 import { usersTable } from "./users";
 import { candidatesTable } from "./candidates";
@@ -21,6 +22,7 @@ export const interviewPanelMembersTable = pgTable("interview_panel_members", {
   panelId: integer("panel_id").notNull().references(() => interviewPanelsTable.id, { onDelete: "cascade" }),
   doctorId: integer("doctor_id").notNull().references(() => usersTable.id),
   isMain: boolean("is_main").notNull().default(false),
+  marksEntryEnabled: boolean("marks_entry_enabled").notNull().default(false),
 }, (t) => ({
   unq: unique().on(t.panelId, t.doctorId),
 }));

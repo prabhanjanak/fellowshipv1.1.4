@@ -6,7 +6,7 @@ import {
   interviewPanelsTable, interviewPanelMembersTable, unitsTable,
   applicationsTable, candidatePreferencesTable, interviewScoresTable, 
   doctorAssignmentsTable, doctorPanelStatusTable, panelQueueTable, 
-  allocationsTable, examAttemptsTable, candidateExamAssignmentsTable, specialitiesTable
+  examAttemptsTable, candidateExamAssignmentsTable, specialitiesTable
 } from "@workspace/db";
 import { eq, sql, ilike } from "drizzle-orm";
 import { logger } from "../lib/logger";
@@ -216,7 +216,6 @@ async function runSeedDemo() {
   await db.delete(applicationFormsTable);
   await db.delete(seatMatrixEntriesTable);
   await db.delete(programsTable);
-  await db.delete(allocationsTable);
   await db.delete(applicationsTable);
   await db.delete(candidatePreferencesTable);
   await db.delete(interviewScoresTable);

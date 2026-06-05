@@ -18,7 +18,6 @@ import ProgramsPage from "./pages/ProgramsPage";
 import UsersPage from "./pages/UsersPage";
 import InterviewsPage from "./pages/InterviewsPage";
 import RankingsPage from "./pages/RankingsPage";
-import AllocationsPage from "./pages/AllocationsPage";
 import ProfilePage from "./pages/ProfilePage";
 import ResultsPage from "./pages/ResultsPage";
 import ApplicationFormsPage from "./pages/ApplicationFormsPage";
@@ -79,7 +78,6 @@ function AppRouter() {
             <Route path="/exams/:id" component={ExamDashboardPage} />
             <Route path="/interviews" component={InterviewsPage} />
             <Route path="/rankings" component={RankingsPage} />
-            <Route path="/allocations" component={AllocationsPage} />
             <Route path="/application-forms" component={ApplicationFormsPage} />
             <Route path="/application-forms/:token/manual-entry">
               {(params) => <ApplyPage token={params.token} isManualEntry={true} />}

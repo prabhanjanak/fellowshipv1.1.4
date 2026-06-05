@@ -43,7 +43,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { void loadMe(); }, [loadMe]);
 
   const login = async (email: string, password: string) => {
-    const data = await api.post<{ token: string; user: User }>("/auth/login", { email, password });
+    let networkIp = "";
+    try {
+      const ipRes = await fetch("https://api.ipify.org?format=json").then((r) => r.json());
+      if (ipRes && ipRes.ip) {
+        networkIp = ipRes.ip;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch public network IP:", e);
+    }
+
+    const data = await api.post<{ token: string; user: User }>("/auth/login", { email, password, networkIp });
     setToken(data.token);
     setUser(data.user);
   };

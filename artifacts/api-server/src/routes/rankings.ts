@@ -1,12 +1,10 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { 
-  db, 
+  readDb, 
   specialitiesTable, 
   candidatesTable, 
-  unitsTable, 
-  globalSettingsTable,
-  allocationsTable
+  unitsTable
 } from "@workspace/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { computeScoresForProgram, getSpecialitySegment } from "../lib/scoring";
@@ -14,63 +12,74 @@ import * as XLSX from "xlsx";
 
 const router: Router = Router();
 
-// GET /rankings/weights — get current dynamic weights config
-router.get(
-  "/rankings/weights",
-  requireAuth,
-  async (req, res) => {
-    try {
-      const [setting] = await db.select().from(globalSettingsTable).where(eq(globalSettingsTable.key, "merit_weights"));
-      if (setting) {
-        res.json(JSON.parse(setting.value));
+// Styled spreadsheet helper constants
+const HEADER_FONT  = { bold: true, color: { rgb: "FFFFFF" }, sz: 11, name: "Calibri" };
+const HEADER_ALIGN = { horizontal: "center", vertical: "center", wrapText: false };
+const ROW_EVEN     = { patternType: "solid", fgColor: { rgb: "E8F0FE" } };
+const ROW_ODD      = { patternType: "solid", fgColor: { rgb: "FFFFFF" } };
+const BODY_FONT    = { sz: 10, name: "Calibri" };
+const BODY_ALIGN   = { horizontal: "left", vertical: "center", wrapText: false };
+const THIN_BORDER  = {
+  top:    { style: "thin", color: { rgb: "C5D3E8" } },
+  bottom: { style: "thin", color: { rgb: "C5D3E8" } },
+  left:   { style: "thin", color: { rgb: "C5D3E8" } },
+  right:  { style: "thin", color: { rgb: "C5D3E8" } },
+};
+
+function buildStyledSheet(rows: Record<string, any>[], headerColorHex: string = "0B4A8F"): XLSX.WorkSheet {
+  if (rows.length === 0) {
+    const ws = XLSX.utils.json_to_sheet([]);
+    return ws;
+  }
+
+  const headers = Object.keys(rows[0]);
+  const numCols = headers.length;
+  const numRows = rows.length;
+
+  const wsData: any[][] = [headers, ...rows.map(r => headers.map(h => r[h] ?? ""))];
+  const ws: XLSX.WorkSheet = XLSX.utils.aoa_to_sheet(wsData);
+
+  for (let R = 0; R <= numRows; R++) {
+    for (let C = 0; C < numCols; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      if (!ws[addr]) continue;
+      const cell = ws[addr];
+
+      if (R === 0) {
+        cell.s = {
+          fill:      { patternType: "solid", fgColor: { rgb: headerColorHex } },
+          font:      HEADER_FONT,
+          alignment: HEADER_ALIGN,
+          border:    THIN_BORDER,
+        };
       } else {
-        // Return default weights
-        res.json({ mcq: 50, psychometric: 10, interview: 50 });
+        cell.s = {
+          fill:      R % 2 === 0 ? ROW_ODD : ROW_EVEN,
+          font:      BODY_FONT,
+          alignment: BODY_ALIGN,
+          border:    THIN_BORDER,
+        };
       }
-    } catch (e) {
-      res.status(500).json({ error: String(e) });
     }
   }
-);
 
-// POST /rankings/weights — save dynamic weights config
-router.post(
-  "/rankings/weights",
-  requireAuth,
-  requireRole("super_admin", "program_admin", "central_exam_coordinator"),
-  async (req, res) => {
-    try {
-      const { mcq, psychometric, interview } = req.body as { mcq: number; psychometric: number; interview: number };
-      
-      if (mcq === undefined || psychometric === undefined || interview === undefined) {
-        res.status(400).json({ error: "mcq, psychometric, and interview weightages are required" });
-        return;
-      }
-
-      const sum = Number(mcq) + Number(psychometric) + Number(interview);
-      if (Math.abs(sum - 110) > 0.01) {
-        res.status(400).json({ error: "Marks must sum to exactly 110" });
-        return;
-      }
-
-      const valueStr = JSON.stringify({ mcq, psychometric, interview });
-      const [existing] = await db.select().from(globalSettingsTable).where(eq(globalSettingsTable.key, "merit_weights"));
-
-      if (existing) {
-        await db.update(globalSettingsTable)
-          .set({ value: valueStr, updatedAt: new Date() })
-          .where(eq(globalSettingsTable.id, existing.id));
-      } else {
-        await db.insert(globalSettingsTable)
-          .values({ key: "merit_weights", value: valueStr });
-      }
-
-      res.json({ success: true, weights: { mcq, psychometric, interview } });
-    } catch (e) {
-      res.status(500).json({ error: String(e) });
+  ws["!cols"] = headers.map((h) => {
+    let maxLen = h.length;
+    for (const row of rows) {
+      const v = row[h];
+      if (v != null) maxLen = Math.max(maxLen, String(v).length);
     }
-  }
-);
+    return { wch: Math.min(maxLen + 4, 50) };
+  });
+
+  ws["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft", state: "frozen" };
+  ws["!autofilter"] = {
+    ref: XLSX.utils.encode_range({ s: { c: 0, r: 0 }, e: { c: numCols - 1, r: numRows } }),
+  };
+  ws["!rows"] = [{ hpt: 22 }, ...Array(numRows).fill({ hpt: 18 })];
+
+  return ws;
+}
 
 // GET /rankings — get ranked candidates list
 router.get(
@@ -86,10 +95,16 @@ router.get(
       const segmentFilter = req.query["segment"] ? String(req.query["segment"]) : undefined;
 
       const scores = await computeScoresForProgram(programId);
-      const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
-      const candidates = await db.select().from(candidatesTable);
-      const units = await db.select().from(unitsTable);
-      const allocations = await db.select().from(allocationsTable).where(eq(allocationsTable.programId, programId));
+      const specs = await readDb.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
+      
+      const candidateIds = scores.map(s => s.candidateId);
+      const candidates = candidateIds.length > 0 
+        ? await readDb.select().from(candidatesTable).where(inArray(candidatesTable.id, candidateIds))
+        : [];
+      const unitIds = [...new Set(candidates.map(c => c.unitId).filter(Boolean))] as number[];
+      const units = unitIds.length > 0 
+        ? await readDb.select().from(unitsTable).where(inArray(unitsTable.id, unitIds))
+        : [];
 
       let filteredScores = scores;
 
@@ -107,15 +122,16 @@ router.get(
           });
         });
       }
-
       res.json(filteredScores.map((s) => {
         const topSpecId = specFilter || s.preferenceSpecIds[0];
         const topSpec = topSpecId ? specs.find((x) => x.id === topSpecId) : null;
         
-        // Find allocation
-        const alloc = allocations.find(a => a.candidateId === s.candidateId && (specFilter ? a.specialityId === specFilter : true));
-        const unit = alloc?.unitId ? units.find((u) => u.id === alloc.unitId) : null;
         const cand = candidates.find((c) => c.id === s.candidateId);
+        const unit = cand?.unitId ? units.find((u) => u.id === cand.unitId) : null;
+
+        const vivaStatus = specFilter ? (s.specialityVivaStatus[specFilter] ?? "complete") : (topSpecId ? (s.specialityVivaStatus[topSpecId] ?? "complete") : "complete");
+        const enabledDoctorCount = specFilter ? (s.specialityEnabledDoctorCount[specFilter] ?? 0) : (topSpecId ? (s.specialityEnabledDoctorCount[topSpecId] ?? 0) : 0);
+
 
         return {
           candidateId: s.candidateId,
@@ -125,17 +141,21 @@ router.get(
           psychometricScore: s.psychometricScore,
           interviewScore: specFilter ? (s.specialityInterviewScores[specFilter] ?? 0) : s.interviewScore,
           totalScore: specFilter ? (s.specialityScores[specFilter] ?? 0) : s.totalScore,
-          rank: specFilter ? (s.specialityRanks[specFilter] ?? 999) : s.overallRank,
+          rank: specFilter ? (s.specialityRanks[specFilter] ?? null) : null,
           specialityRank: topSpecId ? (s.specialityRanks[topSpecId] ?? null) : null,
-          segmentRank: topSpec ? (s.segmentRanks[getSpecialitySegment(topSpec.name)] ?? null) : null,
+          segmentRank: null,
           topPreference: topSpec?.name ?? null,
           unitName: unit?.name ?? null,
-          status: alloc?.status ?? cand?.status ?? "pending",
+          status: cand?.status ?? "pending",
           preferredLocations: topSpecId ? (s.preferredLocations[topSpecId] ?? []) : [],
           phone: cand?.phone ?? "",
           email: cand?.email ?? "",
+          vivaStatus,
+          enabledDoctorCount,
+          isPendingViva: vivaStatus === "pending",
         };
       }));
+
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -153,50 +173,59 @@ router.get(
 
     try {
       const scores = await computeScoresForProgram(programId);
-      const specs = await db.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
-      const candidates = await db.select().from(candidatesTable);
-      const units = await db.select().from(unitsTable);
-      const allocations = await db.select().from(allocationsTable).where(eq(allocationsTable.programId, programId));
+      const specs = await readDb.select().from(specialitiesTable).where(eq(specialitiesTable.programId, programId));
 
       const wb = XLSX.utils.book_new();
 
-      // Generate separate rank sheets for each specialization (No master/overall sheet as per user request)
+      // Generate separate rank sheets for each specialization
       for (const spec of specs) {
         const specCandidates = scores.filter(s => s.specialityScores[spec.id] !== undefined);
         
-        // Sort by specialty rank
-        specCandidates.sort((a, b) => (a.specialityRanks[spec.id] ?? 999) - (b.specialityRanks[spec.id] ?? 999));
+        // Sort by total score descending (Total DESC), then rank ascending
+        specCandidates.sort((a, b) => {
+          const scoreA = a.specialityScores[spec.id] ?? 0;
+          const scoreB = b.specialityScores[spec.id] ?? 0;
+          if (scoreB !== scoreA) return scoreB - scoreA;
+          const rankA = a.specialityRanks[spec.id] ?? 999;
+          const rankB = b.specialityRanks[spec.id] ?? 999;
+          return rankA - rankB;
+        });
 
-        const specRows = specCandidates.map((s, idx) => {
-          const rank = s.specialityRanks[spec.id] ?? (idx + 1);
+        const specRows = specCandidates.map((s) => {
+          const rank = s.specialityRanks[spec.id] ?? 999;
           const score = s.specialityScores[spec.id] ?? 0;
           const intScore = s.specialityInterviewScores[spec.id] ?? 0;
-          const cand = candidates.find((c) => c.id === s.candidateId);
 
           return {
-            "S.No": rank,
-            "Candidate Name": s.fullName,
-            "Origin Place": cand?.address ?? "",
-            "Choice of Seat": spec.name,
-            "For Location": (s.preferredLocations[spec.id] ?? []).join(", "),
-            "MCQ's 50": Number(s.mcqScore.toFixed(1)),
-            "Mind Matters 10": Number(s.psychometricScore.toFixed(1)),
-            "VIVA 50": Number(intScore.toFixed(1)),
-            "Total Marks 110": Number(score.toFixed(2)),
-            "Rank Position": rank
+            "Rank": rank,
+            "Application No": s.candidateCode,
+            "Student Name": s.fullName,
+            "Speciality": spec.name,
+            "MCQ": Number(s.mcqScore.toFixed(1)),
+            "Viva": Number(intScore.toFixed(1)),
+            "Mind Matters": Number(s.psychometricScore.toFixed(1)),
+            "Total": Number(score.toFixed(2)),
           };
         });
 
         // Limit sheet name to maximum 31 characters as required by excel
         const sheetName = spec.name.substring(0, 30);
-        const wsSpec = XLSX.utils.json_to_sheet(specRows);
-        wsSpec["!cols"] = specRows[0] ? Object.keys(specRows[0]).map(() => ({ wch: 22 })) : [];
+        const wsSpec = buildStyledSheet(specRows, "0B4A8F");
         XLSX.utils.book_append_sheet(wb, wsSpec, sheetName);
       }
 
       const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-      const date = new Date().toISOString().split("T")[0];
-      res.setHeader("Content-Disposition", `attachment; filename=SAV_SubSpeciality_Rank_Sheets_${date}.xlsx`);
+      
+      const now = new Date();
+      const YYYY = now.getFullYear();
+      const MM = String(now.getMonth() + 1).padStart(2, "0");
+      const DD = String(now.getDate()).padStart(2, "0");
+      const HH = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const timestamp = `${YYYY}${MM}${DD}_${HH}${mm}`;
+      const filename = `Rankings_${timestamp}.xlsx`;
+
+      res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.send(buf);
     } catch (e) {
@@ -206,4 +235,3 @@ router.get(
 );
 
 export default router;
-

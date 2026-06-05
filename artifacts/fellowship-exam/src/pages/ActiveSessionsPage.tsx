@@ -17,6 +17,18 @@ export default function ActiveSessionsPage() {
   const [timeoutMinutes, setTimeoutMinutes] = useState("30");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRoleFilter, setSelectedRoleFilter] = useState("all");
+  const [systemIp, setSystemIp] = useState("");
+
+  useEffect(() => {
+    fetch("/api/system-ip")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.ip) {
+          setSystemIp(data.ip);
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch system IP:", err));
+  }, []);
 
   const { data: activeSessions = [], refetch: refetchSessions, isFetching } = useQuery<any[]>({
     queryKey: ["active-sessions"],
@@ -104,24 +116,54 @@ export default function ActiveSessionsPage() {
   };
 
   const parseDeviceAgent = (ua: string | null | undefined) => {
-    if (!ua) return "Unknown Device";
+    if (!ua) return { type: "Unknown", name: "Unknown Device" };
+
+    // Handle parsed app device info (e.g. "iOS Mobile (App)", "Android Mobile (App)")
+    if (ua.includes(" (App)")) {
+      const type = ua.includes("Tablet") || ua.includes("iPad") ? "Tablet" : "Mobile";
+      return { type, name: ua };
+    }
+
     const u = ua.toLowerCase();
-    let os = "OS";
-    let browser = "Browser";
+    let type = "Desktop";
+    let name = "Unknown Device";
 
-    if (u.includes("windows")) os = "Windows";
-    else if (u.includes("macintosh") || u.includes("mac os")) os = "macOS";
-    else if (u.includes("linux")) os = "Linux";
-    else if (u.includes("android")) os = "Android";
-    else if (u.includes("iphone") || u.includes("ipad")) os = "iOS";
+    if (u.includes("ipad") || (u.includes("macintosh") && navigator.maxTouchPoints > 1)) {
+      type = "Tablet";
+      name = "iPad";
+    } else if (u.includes("iphone") || u.includes("ipod")) {
+      type = "Mobile";
+      name = "iPhone";
+    } else if (u.includes("android")) {
+      type = u.includes("mobile") ? "Mobile" : "Tablet";
+      // Try to extract Android device name/model
+      const match = ua.match(/\(([^)]+)\)/);
+      if (match && match[1]) {
+        const parts = match[1].split(";");
+        const devicePart = parts.find(p => p.includes("Build/") || (!p.includes("Android") && !p.includes("Linux") && !p.includes("wv")));
+        if (devicePart) {
+          name = devicePart.split("Build/")[0].trim();
+        } else {
+          name = parts[parts.length - 1].trim();
+        }
+      } else {
+        name = "Android Device";
+      }
+    } else if (u.includes("windows phone")) {
+      type = "Mobile";
+      name = "Windows Phone";
+    } else if (u.includes("windows")) {
+      type = "Desktop";
+      name = "Windows PC";
+    } else if (u.includes("macintosh") || u.includes("mac os")) {
+      type = "Desktop";
+      name = "Mac PC";
+    } else if (u.includes("linux")) {
+      type = "Desktop";
+      name = "Linux PC";
+    }
 
-    if (u.includes("chrome") && !u.includes("chromium") && !u.includes("edg")) browser = "Chrome";
-    else if (u.includes("firefox")) browser = "Firefox";
-    else if (u.includes("safari") && !u.includes("chrome")) browser = "Safari";
-    else if (u.includes("edg") || u.includes("edge")) browser = "Edge";
-    else if (u.includes("trident") || u.includes("msie")) browser = "IE";
-
-    return `${browser} on ${os}`;
+    return { type, name };
   };
 
   // Compute metrics
@@ -172,7 +214,7 @@ export default function ActiveSessionsPage() {
               <span className="text-[10px] font-bold text-orange-850 uppercase tracking-widest">Active Security Monitor</span>
             </div>
             <h1 className="text-3xl md:text-4xl font-black tracking-tight text-slate-900 leading-tight">
-              Portal Logins & Active Sessions
+              Portal Logins & Active Sessions {systemIp ? `(${systemIp})` : ""}
             </h1>
             <p className="text-xs md:text-sm font-semibold text-slate-550 leading-relaxed">
               Real-time audit directory of active coordinators, doctors, and units. Monitor system concurrency, invalid logins, and secure auto-logout settings.
@@ -320,7 +362,7 @@ export default function ActiveSessionsPage() {
                   <tr className="border-b bg-slate-50/50">
                     <th className="px-6 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest w-72">Stakholder Info</th>
                     <th className="px-4 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest">Network (IP Address)</th>
-                    <th className="px-4 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest">Device Agent</th>
+                    <th className="px-4 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest">Device Type & Name</th>
                     <th className="px-4 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest">Last Access Timestamp</th>
                     <th className="px-6 py-3.5 font-bold text-[10px] text-slate-500 uppercase tracking-widest text-right w-44">Manage Status</th>
                   </tr>
@@ -367,10 +409,13 @@ export default function ActiveSessionsPage() {
 
                         <td className="px-4 py-4">
                           <div className="space-y-1">
-                            <span className="text-xs font-semibold text-slate-700">
-                              {parsedAgent}
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {parsedAgent.type}
                             </span>
-                            <p className="text-[9px] font-bold text-slate-400 max-w-[170px] truncate" title={sess.deviceInfo}>
+                            <p className="text-xs font-bold text-slate-850">
+                              {parsedAgent.name}
+                            </p>
+                            <p className="text-[9px] font-semibold text-slate-400 max-w-[170px] truncate" title={sess.deviceInfo}>
                               {sess.deviceInfo || "Raw agent unavailable"}
                             </p>
                           </div>

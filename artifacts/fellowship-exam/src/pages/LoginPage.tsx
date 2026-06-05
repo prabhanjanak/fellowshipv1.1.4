@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import logoUrl from "../assets/seh_sav_logo_1777703794142.jpg";
+import goldenJubileeLogoUrl from "../assets/golden_jubilee_logo.png";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -19,6 +20,18 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
+  const [systemIp, setSystemIp] = useState("");
+
+  useEffect(() => {
+    fetch("/api/system-ip")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.ip) {
+          setSystemIp(data.ip);
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch system IP:", err));
+  }, []);
 
 
 
@@ -69,17 +82,33 @@ export default function LoginPage() {
       >
         {/* Branding Section */}
         <div className="text-center space-y-4">
-          <motion.div
-            whileHover={{ scale: 1.02 }}
-            className="relative inline-block group cursor-pointer"
-          >
-            <div className="absolute -inset-1.5 bg-gradient-to-r from-orange-500 via-white to-blue-500 rounded-3xl blur opacity-35 group-hover:opacity-60 transition duration-500"></div>
-            <img
-              src={logoUrl}
-              alt="Sankara Eye Foundation"
-              className="relative w-full h-auto max-h-24 mx-auto rounded-2xl shadow-2xl object-contain bg-white p-4 transition-all duration-500"
-            />
-          </motion.div>
+          <div className="flex items-center justify-center gap-6">
+            {/* Existing Logo */}
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              className="relative inline-block group cursor-pointer"
+            >
+              <div className="absolute -inset-1.5 bg-gradient-to-r from-orange-500 to-white rounded-3xl blur opacity-25 group-hover:opacity-50 transition duration-500"></div>
+              <img
+                src={logoUrl}
+                alt="Sankara Academy of Vision"
+                className="relative h-20 w-auto rounded-2xl shadow-2xl object-contain bg-white p-3 transition-all duration-500"
+              />
+            </motion.div>
+
+            {/* Golden Jubilee Logo */}
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              className="relative inline-block group cursor-pointer"
+            >
+              <div className="absolute -inset-1.5 bg-gradient-to-r from-yellow-400 via-amber-500 to-yellow-600 rounded-full blur opacity-30 group-hover:opacity-60 transition duration-500"></div>
+              <img
+                src={goldenJubileeLogoUrl}
+                alt="Sankara Golden Jubilee"
+                className="relative h-20 w-auto object-contain transition-all duration-500 drop-shadow-[0_10px_20px_rgba(245,158,11,0.35)]"
+              />
+            </motion.div>
+          </div>
 
           <div className="space-y-2">
             <h1 className="text-4xl font-black tracking-tighter uppercase italic leading-none flex flex-col items-center gap-0 drop-shadow-lg">
@@ -91,6 +120,23 @@ export default function LoginPage() {
               <p className="text-[9px] font-black text-blue-100 uppercase tracking-[0.4em]">Fellowship Operations</p>
               <div className="h-[1px] w-10 bg-gradient-to-r from-transparent via-orange-400 to-transparent opacity-60" />
             </div>
+
+            {/* Golden Jubilee & 3 Million Free Surgeries Milestone Celebration Banner */}
+            <motion.div
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="mt-3 inline-flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500/10 via-yellow-500/15 to-amber-500/10 border border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.15)] text-center max-w-sm mx-auto backdrop-blur-sm select-none"
+            >
+              <span className="text-[9px] font-black text-yellow-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-yellow-400 animate-pulse" />
+                Golden Jubilee Celebration
+              </span>
+              <span className="text-[10px] font-extrabold text-white leading-normal">
+                Celebrating 50 Years of Social Impact & <br/>
+                <span className="text-yellow-300 font-black">3 Million Free Eye Surgeries</span>
+              </span>
+            </motion.div>
           </div>
         </div>
 
@@ -200,7 +246,7 @@ export default function LoginPage() {
             <div className="bg-white/5 backdrop-blur-md p-4 border-t border-white/10 flex items-center justify-center gap-2">
               <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
               <div className="text-[9px] font-black uppercase tracking-[0.25em] text-blue-200">
-                Secure Server Connection Active
+                Secure Server Connection Active {systemIp ? `(${systemIp})` : ""}
               </div>
             </div>
           </Card>

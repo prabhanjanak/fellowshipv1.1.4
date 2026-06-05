@@ -50,7 +50,6 @@ const navItems: NavItem[] = [
   { label: "Interviews",        href: "/interviews",         icon: Stethoscope,     roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator", "unit_coordinator", "doctor"] },
   { label: "Seat Matrix",       href: "/seat-matrix",        icon: Grid3x3,         roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator", "unit_coordinator"] },
   { label: "Rankings",          href: "/rankings",           icon: Trophy,          roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"] },
-  { label: "Allocations",       href: "/allocations",        icon: Award,           roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"] },
   { label: "Payments",          href: "/payments",           icon: CreditCard,      roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"] },
   { label: "Batches",           href: "/batches",            icon: Grid3x3,         roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"] },
   { label: "Reports",           href: "/reports",            icon: BarChart3,       roles: ["super_admin", "program_admin", "central_exam_coordinator", "exam_coordinator"] },

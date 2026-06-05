@@ -7,7 +7,6 @@ export * from "./preferences";
 export * from "./documents";
 export * from "./exams";
 export * from "./interviews";
-export * from "./allocations";
 export * from "./application-forms";
 export * from "./seat-matrix";
 export * from "./payment-settings";
